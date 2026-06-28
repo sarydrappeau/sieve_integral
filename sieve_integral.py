@@ -1369,6 +1369,8 @@ def sieve_integral_harman(polytope_data,
         variables = None
 
     polytope = Polyhedron(polytope_data, base_ring = QQ)
+    if polytope.is_empty():
+        return RealBallField(precision=precision).zero()
     border = is_polytope_on_sum1(polytope)
     dim = polytope.ambient_dimension()
 
