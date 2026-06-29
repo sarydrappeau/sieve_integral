@@ -1,6 +1,6 @@
 # Computing of sieve integrals using LattE
 
-Python 3.11.2 / SageMath 10.7 script files providing methods to compute integrals of the shape
+Python / Sage script files providing methods to compute integrals of the shape
 
 $$ I(P) = \int_P \frac{dt_1 \dotsb dt_k}{t_1 \dotsb t_k} $$
 
@@ -79,7 +79,7 @@ Feel free to contact [@sarydrappeau-arch](https://github.com/sarydrappeau-arch) 
 
 ## License
 
-This project is licensed under the [GNU GPL 3] License - see the LICENSE file for details.
+This project is licensed under the [GNU GPL 3 License](LICENSE).
 
 ## Acknowledgments
 
