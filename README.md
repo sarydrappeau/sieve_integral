@@ -1,4 +1,4 @@
-# Computing of sieve integrals using LattE
+# Computation of sieve integrals using LattE
 
 Python / Sage script files providing methods to compute integrals of the shape
 
