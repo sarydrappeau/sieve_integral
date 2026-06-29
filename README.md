@@ -66,11 +66,11 @@ See the README.md file for more information about those.
 ## Help
 
 The doc-strings contain informations relative to usage.
-Feel free to contact [@sarydrappeau-arch](https://github.com/sarydrappeau-arch) if needed.
+Feel free to contact [@sarydrappeau](https://github.com/sarydrappeau) if needed.
 
 ## Authors
 
-* [Sary Drappeau](https://github.com/sarydrappeau-arch)
+* [Sary Drappeau](https://github.com/sarydrappeau)
 * Adrien Mounier
 
 ## Version History
