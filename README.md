@@ -6,9 +6,9 @@ $$ I(P) = \int_P \frac{dt_1 \dotsb dt_k}{t_1 \dotsb t_k} $$
 
 where $`P \subset {\mathbb R}_{>0}^k`$ is a rational convex polytope, and variants such as
 
-$$ I^*(P) = \int_{P \cap H_d} \frac{dt_1 \dotsb dt_{k-1}}{t_1 \dotsb t_k} $$
+$$ I^*(P) = \int_{P \cap H_k} \frac{dt_1 \dotsb dt_{k-1}}{t_1 \dotsb t_k} $$
 
-where $`H = \lbrace (t_1, \dotsc, t_k) \in {\mathbb R}^k, \sum_i t_i = 1\rbrace`$.
+where $`H_k = \lbrace (t_1, \dotsc, t_k) \in {\mathbb R}^k, \sum_i t_i = 1\rbrace`$.
 
 ## Description
 
@@ -37,8 +37,8 @@ The script ``number_theoretic_dde_solutions.py`` defines three classes:
 - ``BuchstabB``: defines the function $u \mapsto u \omega(u)$, where $\omega$ is the [Buchstab ω function](https://en.wikipedia.org/wiki/Buchstab_function).
 - ``FriedlanderS``: defines a variant of the [Friedlander σ function](https://doi.org/10.1112/plms/s3-33.3.565).
 
-Compared with the current SageMath implementation of the Dickman Rho function, their specificity is to carry out the computation in a RealBallField.
-The algorithm is the same as in the SageMath ``DickmanRho`` implementation, based on the [Marsaglia-Zaman-Marsaglia method](https://doi.org/10.2307/2008355).
+Compared with the current Sage implementation of the Dickman Rho function, their specificity is to carry out the computation in a RealBallField.
+The algorithm is the same as in the Sage ``DickmanRho`` implementation, based on the [Marsaglia-Zaman-Marsaglia method](https://doi.org/10.2307/2008355).
 
 ### Examples
 
@@ -55,18 +55,23 @@ See the README.md file for more information about those.
 
 ### Installing
 
-- Install SageMath following the instructions described here : [Sage Installation Guide](https://doc.sagemath.org/html/en/installation/index.html).
+- Install Sage following the instructions described here : [Sage Installation Guide](https://doc.sagemath.org/html/en/installation/index.html).
 - Install ``LattE`` : [latte-integrale from conda-forge](https://anaconda.org/channels/conda-forge/packages/latte-integrale/overview)
 
 ### Executing program
 
 - Download and place both scripts ``number_theoretic_dde_solutions.py`` and ``sieve_integral.py`` your favourite directory.
-- Import or load them in your notebook using *e.g.* ``load("sieve_integral.py")``. This loads the script's functions, including ``sieve_integral`` and ``sieve_integral_harman``, into your notebook namespace.
+- Import or load them in your notebook using *e.g.*
+```
+load("sieve_integral.py")
+```
+This loads the script's functions, including ``sieve_integral`` and ``sieve_integral_harman``, into your notebook namespace.
 
 ## Help
 
-The doc-strings contain informations relative to usage.
-Feel free to contact [@sarydrappeau](https://github.com/sarydrappeau) if needed.
+* The doc-strings contain informations relative to usage.
+* The Example folder contains several notebooks showing how to use the scripts in concrete examples from the sieve literature.
+* Feel free to contact [@sarydrappeau](https://github.com/sarydrappeau) if needed.
 
 ## Authors
 
