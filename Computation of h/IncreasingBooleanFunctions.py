@@ -123,7 +123,7 @@ def write_Fk(k):
     """
     Stores the list of increasing boolean functions of dimension k.
     """
-    with open(f"BooleanFunctions/data/Fk-k={k}", "w") as f:
+    with open(f"data/Fk-k={k}", "w") as f:
         for l in increasing_boolean_functions[k]:
             f.write("".join([str(int(i)) for i in l]) + "\n")
 
@@ -131,7 +131,7 @@ def read_Fk(k):
     """
     Recovers the list of increasing boolean functions of dimension k.
     """
-    with open(f"BooleanFunctions/data/Fk-k={k}", "r") as f:
+    with open(f"data/Fk-k={k}", "r") as f:
         s = f.read()
         Ls = s.split("\n")
         t = [[int(i) for i in x] for x in Ls[:-1]]
@@ -140,7 +140,7 @@ def read_Fk(k):
 
 # Compute the list of all functions in {\mathcal F}_k for 1\leq k\leq 7.
 for k in range(1, k_max+1):
-    if os.path.exists(f"BooleanFunctions/data/Fk-k={k}"):
+    if os.path.exists(f"data/Fk-k={k}"):
         read_Fk(k)
     else:
         list_increasing_lorenz_boolean_functions(k)
@@ -277,10 +277,10 @@ def write_mm(k):
     """
     Stores the minimal and maximal points for boolean functions of dimension k in appropriate files.
     """
-    with open(f"BooleanFunctions/data/mini-k={k}", "w") as f:
+    with open(f"data/mini-k={k}", "w") as f:
         for l in minimal_points[k]:
             f.write(",".join(["".join([str(int(i)) for i in v]) for v in l]) + "\n")
-    with open(f"BooleanFunctions/data/maxi-k={k}", "w") as f:
+    with open(f"data/maxi-k={k}", "w") as f:
         for l in maximal_points[k]:
             f.write(",".join(["".join([str(int(i)) for i in v]) for v in l]) + "\n")
             
@@ -288,14 +288,14 @@ def read_mm(k):
     """
     Retrieves the minimal and maximal points for boolean functions of dimension k from the appropriate files.
     """
-    with open(f"BooleanFunctions/data/mini-k={k}", "r") as f:
+    with open(f"data/mini-k={k}", "r") as f:
         s = f.read()
         Ls = s.split("\n")
         minimal_points[k] = []
         for l in Ls[:-1]:
             t = l.split(",") if l != "" else []
             minimal_points[k].append(np.array([[int(i) for i in s] for s in t], dtype=np.bool).reshape((len(t), k)))
-    with open(f"BooleanFunctions/data/maxi-k={k}", "r") as f:
+    with open(f"data/maxi-k={k}", "r") as f:
         s = f.read()
         Ls = s.split("\n")
         maximal_points[k] = []
@@ -345,7 +345,7 @@ def elague_mm(k):
 # Computes the list of all functions in {\mathcal F}_k for 1\leq k\leq 7.
 
 for k in increasing_boolean_functions_reduced:
-    if os.path.exists(f"BooleanFunctions/data/mini-k={k}") and os.path.exists(f"BooleanFunctions/data/maxi-k={k}"):
+    if os.path.exists(f"data/mini-k={k}") and os.path.exists(f"data/maxi-k={k}"):
         read_mm(k)
     else:
         calcule_mm(k)
