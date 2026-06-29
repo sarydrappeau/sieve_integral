@@ -14,6 +14,8 @@ sage -n jupyter
 * Execute cells from top to bottom.
 * Feel free to vary the ``precision``, ``facteur`` and ``verbose`` parameters.
 
+## Detailed description of content
+
 ### ``Tests-Chen.ipynb``
 
 Tests on two integrals from J. R. Chen's 1978 work on primes with a twin almost-prime (*Sci. Sin.* **21**, 421-430 (1978)).
