@@ -61,7 +61,7 @@ See the README.md file for more information about those.
 ### Executing program
 
 - Download and place both scripts ``number_theoretic_dde_solutions.py`` and ``sieve_integral.py`` your favourite directory.
-- Import or load them in your notebook using your favourite method.
+- Import or load them in your notebook using *e.g.* ``load("sieve_integral.py")``. This loads the script's functions, including ``sieve_integral`` and ``sieve_integral_harman``, into your notebook namespace.
 
 ## Help
 
