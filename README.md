@@ -86,6 +86,10 @@ This loads the script's functions, including ``sieve_integral`` and ``sieve_inte
 
 This project is licensed under the [GNU GPL 3 License](LICENSE).
 
+## Quoting this work
+
+Quote the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* (Drappeau, Mounier).
+
 ## Acknowledgments
 
 This work is based on the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* (Drappeau, Mounier).
