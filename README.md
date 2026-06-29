@@ -73,18 +73,9 @@ This loads the script's functions, including ``sieve_integral`` and ``sieve_inte
 * The Example folder contains several notebooks showing how to use the scripts in concrete examples from the sieve literature.
 * Feel free to contact [@sarydrappeau](https://github.com/sarydrappeau) if needed.
 
-## Authors
-
-* [Sary Drappeau](https://github.com/sarydrappeau)
-* Adrien Mounier
-
 ## Version History
 
 * 0.1 (2026-06) Initial upload
-
-## License
-
-This project is licensed under the [GNU GPL 3 License](LICENSE).
 
 ## Quoting this work
 
