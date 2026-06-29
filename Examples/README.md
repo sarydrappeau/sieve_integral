@@ -36,5 +36,5 @@ Tests on several integrals from J. Stadlmann, [On the mean square gap between pr
 
 ## Help
 
-Please contact [@sarydrappeau-arch](https://github.com/sarydrappeau-arch) if you need help using these notebooks.
+Please contact [@sarydrappeau](https://github.com/sarydrappeau) if you need help using these notebooks.
 
