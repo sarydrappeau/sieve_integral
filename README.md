@@ -75,7 +75,7 @@ Feel free to contact [@sarydrappeau-arch](https://github.com/sarydrappeau-arch) 
 
 ## Version History
 
-* 0.1 (2026-06) Initial release
+* 0.1 (2026-06) Initial upload
 
 ## License
 
