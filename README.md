@@ -50,7 +50,7 @@ See the README.md file for more information about those.
 
 ### Dependencies
 
-* Requires Sage and LattE (see [Getting Started](#getting-started)).
+* Requires Sage and LattE (see [Installing](#installing)).
 * It was designed with Sage 10.7 and LattE 1.7.6. It may well work with earlier versions. Please report any incompatibility issue you witness.
 
 ### Installing
