@@ -1227,12 +1227,13 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
         polytope_data = Polyhedron(ieqs = ieqs, eqns = eqns)
 
     polytope = Polyhedron(polytope_data, base_ring = QQ)
-    border = is_polytope_on_sum1(polytope_data)
 
     printifdbg = print if verbose > 0 else (lambda *x:None)
     scalar_field = RealBallField(precision)
     if polytope.is_empty():
         return scalar_field.zero()
+
+    border = is_polytope_on_sum1(polytope_data)
 
     mini, maxi = polytope.bounding_box()
     border = is_polytope_on_sum1(polytope)
