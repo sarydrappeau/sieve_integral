@@ -293,7 +293,7 @@ class FriedlanderS:
         return [[self._steps[i], self._steps[i + 1], self._approximants[self._steps[i]]] for i in range(len(self._steps) - 1)]
 
 
-class Rho:
+class DickmanRho:
     """
     Special case of FriedlanderSigma class corresponding to the
     Dickman Rho function.  Performs roughly the same operations as
