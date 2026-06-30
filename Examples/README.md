@@ -2,7 +2,7 @@
 
 ## Content
 
-This folder containes SageMath Jupyter notebooks providing the details for the main examples described in the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* (Drappeau, Mounier).
+This folder containes SageMath Jupyter notebooks providing the details for the main examples described in the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* ([arXiv](https://arxiv.org/abs/2606.30428), [HAL](https://hal.science/hal-05673627)).
 
 ## Usage
 
