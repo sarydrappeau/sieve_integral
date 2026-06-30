@@ -79,6 +79,6 @@ This loads the script's functions, including ``sieve_integral`` and ``sieve_inte
 
 ## Acknowledgments
 
-This work is based on the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* (Drappeau, Mounier).
+This work is based on the preprint *Computing sieve integrals using LattE, and the density of integers with a localized divisor* ([arXiv](https://arxiv.org/abs/2606.30428), [HAL](https://hal.science/hal-05673627)).
 
 Supported by CNRS, Université d'Aix-Marseille, Université Clermont-Auvergne, Institut Universitaire de France, ANR-20-CE91-0006 / FWF-I-4945-N, ANR-24-CE93-0016 / FNS-10.003.145.
