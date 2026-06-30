@@ -10,7 +10,6 @@ from sage.numerical.mip import (MixedIntegerLinearProgram,
 from sage.matrix.special import diagonal_matrix
 from sage.rings.power_series_ring import PowerSeriesRing
 from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
-from sage.rings.polynomial.multi_polynomial import is_MPolynomial
 from sage.rings.big_oh import O
 from sage.misc.misc_c import prod
 from sage.geometry.polyhedron.constructor import Polyhedron
