@@ -60,7 +60,7 @@ See the README.md file for more information about those.
 
 ### Executing program
 
-- Download and place both scripts ``number_theoretic_dde_solutions.py`` and ``sieve_integral.py`` your favourite directory.
+- Download and place both scripts ``number_theoretic_dde_solutions.py`` and ``sieve_integral.py`` in the same directory.
 - Import or load them in your notebook using *e.g.*
 ```
 load("sieve_integral.py")
