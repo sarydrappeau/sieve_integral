@@ -147,8 +147,8 @@ def example_value(name, extra_bits=0):
 
     ``extra_bits`` is added to the example's own default precision -- to both
     components of their ``(p0, p1)`` pair for the h anchors, which is why it is
-    a number of extra bits rather than a precision: the two chains do not count
-    precision the same way. The h examples return the five components of
+    a number of extra bits rather than a precision: the examples do not all run
+    at the same one. The h examples return the five components of
     ``h_bar``; the value kept here is the fourth, the one the notebook reports.
     """
     key = (name, extra_bits)
