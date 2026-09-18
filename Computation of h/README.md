@@ -11,4 +11,7 @@ This will be replaced by the use of Boolean antichains, once we figure out how t
 * The NumPy archive ``list_infos_ab.npz`` contains, for each k, the inequalities of the projections of the
 polytopes Π_F to the (α, β) plane, which ``whichF`` uses in the notebook to find the F for which Δ_F(α, β) is non-empty.
 It is written by ``ecrit_liste_ab`` and read by ``lit_liste_ab``.
+* The JSON file ``hbar-echantillon.json`` contains the sample of values of $`\bar{h}(\alpha, \beta)`$ used for the plot,
+as returned by ``h_bar``: α and β as exact rationals, and the real balls as their midpoint and radius, both exact
+rationals, together with the precision. It is written by ``ecrit_liste`` and read by ``lit_liste``.
 
