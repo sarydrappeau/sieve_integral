@@ -60,12 +60,22 @@ for _file in TEST_FILES:
 
 def select(patterns, tags):
     """
-    The tests whose tags meet ``tags``. A test tagged ``long`` is left out
-    unless ``long`` is asked for, whatever its other tags.
+    The tests whose tags meet ``tags``.
+
+    A test tagged ``timing`` is reached only by ``--only-timing``, and one
+    tagged ``long`` only when ``--long`` is given, whatever their other tags:
+    without the first rule ``--long`` would pull in a benchmark tagged
+    ``("timing", "long")``, which is a ten minute one.
     """
+    def wanted(test_tags):
+        if ("timing" in test_tags) != ("timing" in tags):
+            return False
+        if "long" in test_tags and "long" not in tags:
+            return False
+        return bool(set(test_tags) & tags)
+
     names = [name for name, (_, test_tags) in ALL_TESTS.items()
-             if set(test_tags) & tags
-             and ("long" not in test_tags or "long" in tags)]
+             if wanted(test_tags)]
     if patterns:
         names = [name for name in names
                  if any(fnmatch.fnmatch(name, p) for p in patterns)]
