@@ -1,0 +1,24 @@
+# Conda environment for the scripts in code/ and the notebooks.
+#
+#     conda env create -f environment.yml
+#     conda activate sieve-integral
+#
+# The versions below are the ones the scripts were developed and tested
+# against, as stated in README.md. Earlier ones may well work; please
+# report any incompatibility.
+#
+# It describes the released LattE only, which is all the scripts need.
+# A modified LattE, providing a faster engine for balancing polytopes, is
+# optional; it is built from source and is not covered by this file.
+#
+# conda-forge builds latte-integrale for linux-64 and osx-64 only.
+name: sieve-integral
+channels:
+  - conda-forge
+dependencies:
+  - sage=10.7
+  - latte-integrale=1.7.6
+  # "Computation of h" uses numpy.bool, which was removed in NumPy 1.24 and
+  # reinstated in NumPy 2.0.
+  - numpy>=2.0
+  - tqdm
