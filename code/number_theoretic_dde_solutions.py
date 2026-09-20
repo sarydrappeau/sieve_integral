@@ -508,7 +508,7 @@ class BuchstabB:
         constant_error = approximant.coefficient(0).rad()
         truncation_degree = approximant.degree()
         while truncation_degree >= 0 and approximant.coefficient(truncation_degree).abs().upper() < constant_error:
-            total_error += approximant.coefficient(truncation_degree).above_abs()
+            total_error = total_error.add_error(approximant.coefficient(truncation_degree).above_abs())
             truncation_degree -= 1
         self._approximants[current_left] = approximant.truncate(truncation_degree + 1) + total_error
 
