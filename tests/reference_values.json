@@ -1,4 +1,4 @@
-{"provenance": {"branch": "dde-cleanup", "commit": "3177edb", "cores": 8, "date": "2026-09-20T15:14:06+02:00", "latte": "/home/sary/sage/sage/local/bin/integrate", "sage": "10.7"},
+{"provenance": {"branch": "dde-cleanup", "commit": "d0c922a", "cores": 8, "date": "2026-09-20T21:46:38+02:00", "latte": "/home/sary/sage/sage/local/bin/integrate", "sage": "10.7"},
  "note": "Regression references: what the code gave on this commit, at each example's own precision. Not certified values.",
  "examples": {
   "chen/C1": {"mid": "1079709865371/2199023255552", "prec": 40, "precision": "40", "rad": "399989109/36893488147419103232", "value": "[0.4909952010 +/- 1.43e-11]"},
@@ -10,7 +10,7 @@
   "ford-maynard/I6": {"mid": "-633822166012321399/633825300114114700748351602688", "prec": 60, "precision": "60", "rad": "151128467/77371252455336267181195264", "value": "[-1.0000e-12 +/- 6.90e-18]"},
   "h/0.4-0.6": {"mid": "8369/16384", "prec": 14, "precision": "(50, 14)", "rad": "536870913/4398046511104", "value": "[0.511 +/- 3.19e-4]"},
   "h/0.45-0.5": {"mid": "10261/16384", "prec": 14, "precision": "(50, 14)", "rad": "316008727/34359738368", "value": "[0.6 +/- 0.0355]"},
-  "h/1over6-1over2": {"mid": "95589/524288", "prec": 20, "precision": "(50, 20)", "rad": "67108871/281474976710656", "value": "[0.182322 +/- 6.90e-7]"},
+  "h/1over6-1over2": {"mid": "95589/524288", "prec": 20, "precision": "(50, 20)", "rad": "536870973/2251799813685248", "value": "[0.182322 +/- 6.90e-7]"},
   "maynard/I1": {"mid": "994450843/34359738368", "prec": 30, "precision": "30", "rad": "869902445/576460752303423488", "value": "[0.02894233 +/- 2.78e-9]"},
   "maynard/I2": {"mid": "95877319/268435456", "prec": 30, "precision": "30", "rad": "325622671/72057594037927936", "value": "[0.35717085 +/- 8.21e-9]"},
   "maynard/I3": {"mid": "15044625/1073741824", "prec": 25, "precision": "25", "rad": "632037987/9007199254740992", "value": "[0.0140114 +/- 7.13e-8]"},
