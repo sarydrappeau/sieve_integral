@@ -2,22 +2,34 @@ r"""
 Three particular solutions of differential-delay equations of interest in number theory
 
 Each of them is represented as a piecewise polynomial whose coefficients lie in
-a ``RealBallField``, so that every value returned is a rigorous enclosure:
+a ``RealBallField`` (rigorous enclosure)
 
 - :class:`DickmanRho`, the Dickman `\rho` function;
 - :class:`BuchstabB`, the map `B(u) = u \omega(u)` with `\omega` the Buchstab
   function;
 - :class:`FriedlanderS`, a variant of the Friedlander `\sigma` function.
 
-The three share the base class :class:`DifferentialDelaySolution`, which holds
-the Marsaglia-Zaman-Marsaglia scheme they all follow; a subclass describes the
-differential equation it solves, its known first intervals, and, if they are not
-the non-negative integers, its steps.
+The three share the base class :class:`DifferentialDelaySolution`,
+written with the same Marsaglia-Zaman-Marsaglia scheme ; a subclass
+describes the differential equation it solves, its known first
+intervals, and, if they are not the non-negative integers, its steps.
 
-This file can be ``load``ed in a Sage session, as ``sieve_integral.py`` does, or
-imported as a module. Beware that a ``load``ed file does not go through the Sage
-preparser, so that ``1 / 2`` in it would be a Python float: the grid of steps is
-built in ``QQ`` for that reason.
+EXAMPLES::
+
+    sage: DickmanRho(precision=53)(2).overlaps(RBF(1 - log(2)))
+    True
+    sage: BuchstabB(precision=53)(3).overlaps(RBF(1 + log(2)))
+    True
+    sage: FriedlanderS(2/5, precision=53)(1/2)
+    1.000000000000000
+
+AUTHORS:
+
+- Sary Drappeau (2026-06)
+
+AI DISCLOSURE:
+
+ChatGPT 5.2 provided the basic structure of the class.
 """
 # ****************************************************************************
 #  Distributed under the terms of the GNU General Public License (GPL)
@@ -33,9 +45,6 @@ built in ``QQ`` for that reason.
 # ****************************************************************************
 
 
-# Everything is taken from sage.all: importing a Sage submodule, such as
-# sage.functions.other for ceil, before sage.all in a fresh Python process
-# trips a circular import inside Sage itself.
 from sage.all import QQ, RR, PolynomialRing, RealBallField, ceil, floor
 
 
@@ -72,6 +81,25 @@ class DifferentialDelaySolution:
       Solutions to some Classical Differential-Difference Equations."
       Mathematics of Computation, Vol. 53, No. 187 (1989).
 
+    TESTS:
+
+    Two enclosures of the same number have to meet, so the value returned at a
+    given precision must overlap the value returned at a higher one. This is
+    what fails when the coefficients discarded by ``_truncate`` are accumulated
+    as a value instead of as a radius, which moves the ball instead of widening
+    it::
+
+        sage: low, high = BuchstabB(precision=30), BuchstabB(precision=200)
+        sage: all(low(u).overlaps(high(u)) for u in (5/2, 13/2, 15/2, 21/2))
+        True
+        sage: low, high = DickmanRho(precision=30), DickmanRho(precision=200)
+        sage: all(low(u).overlaps(high(u)) for u in (5/2, 11/2, 15/2))
+        True
+        sage: low = FriedlanderS(2/5, precision=30)
+        sage: high = FriedlanderS(2/5, precision=200)
+        sage: all(low(u).overlaps(high(u)) for u in (3/4, 11/5, 17/5, 4))
+        True
+
     """
 
     def __init__(self, precision=53):
@@ -80,6 +108,11 @@ class DifferentialDelaySolution:
 
         - ``precision`` (default: 53) -- the precision, in bits, of the
         ``RealBallField`` the approximants are defined over.
+
+        EXAMPLES::
+
+            sage: DickmanRho(precision=30).base_ring()
+            Real ball field with 30 bits of precision
         """
         self._taylor_degree = floor(precision * RR(2).log() / RR(3).log())
         self._scalar_ring = RealBallField(precision)
@@ -93,15 +126,15 @@ class DifferentialDelaySolution:
 
     # local variables :
     # _steps : list of rational numbers, delimiting the intervals cut
-    # out by the functional equations
+    #      out by the functional equations
     # _scalar_ring : RealBallField
     # _polynomial_ring : Polynomial Ring over _scalar_ring of 1 variable
     # _approximants : dictionary of elements of _polynomial_ring. The element with key s0 is a
-    # polynomial which approximates the map F
+    #      polynomial which approximates the map F
     #      over the interval starting with s0, mapped to [-1, 1], so
-    # that polynomial(-1) approximates F(step_begin).
+    #      that polynomial(-1) approximates F(step_begin).
     # _taylor_degree : number representing the largest degree we
-    # perform Taylor approximation at.
+    #      perform Taylor approximation at.
 
     # ------------------------------------------------------------------
     # The grid of steps
@@ -110,12 +143,8 @@ class DifferentialDelaySolution:
     def _compute_steps(self, smax):
         """
         Computes the list _steps of the points delimiting the intervals where F
-        is smooth. By default these are the integers up to smax; a subclass
+        is smooth. By default these are the integers up to smax. A subclass
         whose grid is different overrides this.
-
-        The steps are rationals, and not Python integers, because this module is
-        also loaded as a plain .py file, which the Sage preparser does not see:
-        (a + b) / 2 on two Python integers would return a float.
         """
         self._steps = [QQ(i) for i in range(floor(smax) + 1)]
 
@@ -185,12 +214,14 @@ class DifferentialDelaySolution:
         """
         The steps whose interval has no approximant yet, in increasing order.
 
-        The last step begins no interval, and the seeds are in _approximants
-        already, so this is exactly what _compute_approximants has to run over.
-        An approximant is never recomputed: recomputing one returns the very
-        same coefficients, midpoint and radius, since it is built from the
-        stored -- already truncated -- approximant of the interval before it.
-        Extending the grid therefore only fills in the new intervals.
+        EXAMPLES::
+
+            sage: rho = DickmanRho(precision=30)
+            sage: rho._steps_to_compute()
+            []
+            sage: rho._compute_steps(6)
+            sage: rho._steps_to_compute()
+            [3, 4, 5]
         """
         return [step for step in self._steps[:-1]
                 if step not in self._approximants]
@@ -224,10 +255,6 @@ class DifferentialDelaySolution:
         is assumed that denominator_minorant is a lower-bound for
         |denominator|. The method is borrowed from R. Bradshaw's
         sagemath implementation of the Dickman rho function.
-
-        A vanishing denominator_minorant would make the degree below infinite;
-        the callers which have one, at the left end of the interval where the
-        delayed term is still zero, are covered by the test on the numerator.
         """
         if numerator == self._polynomial_ring(0):
             return self._polynomial_ring(0)
@@ -258,14 +285,7 @@ class DifferentialDelaySolution:
         the error can come out a few times larger than the one it is compared
         against; this is a deliberate trade of width against degree. It is also
         borrowed from R. Bradshaw's sagemath implementation of the Dickman rho
-        function, which drops the same terms (truncate_abs) but, being a
-        floating-point computation, does not account for them.
-
-        The discarded coefficients are accumulated as a *radius*, through
-        add_error, and not as a value: the tail they stand for is only known to
-        be at most their sum in absolute value, so adding that sum would move
-        the approximant where it has to be widened, and the resulting ball
-        could then fail to contain the true value.
+        function, which drops the same terms (truncate_abs).
         """
         approximant = self._approximants[current_left]
         total_error = approximant.base_ring()(0)
@@ -283,6 +303,21 @@ class DifferentialDelaySolution:
     def __call__(self, sval):
         """
         Returns a RealBallField element which approximates F(u) with u = sval.
+
+        The argument may be of any real type, and one beyond the last step
+        extends the grid.
+
+        EXAMPLES::
+
+            sage: rho = DickmanRho(precision=30)
+            sage: all(rho(u).overlaps(rho(2)) for u in (2, QQ(2), RR(2), float(2), RBF(2)))
+            True
+            sage: rho(-1)
+            0
+            sage: rho(12).upper() < 1e-5
+            True
+            sage: rho._steps[-1]
+            14
         """
         scalar_ring = self._scalar_ring
 
@@ -306,6 +341,11 @@ class DifferentialDelaySolution:
     def base_ring(self):
         """
         Returns the RealBallField the approximants are defined over.
+
+        EXAMPLES::
+
+            sage: BuchstabB(precision=20).base_ring()
+            Real ball field with 20 bits of precision
         """
         return self._scalar_ring
 
@@ -317,6 +357,15 @@ class DifferentialDelaySolution:
         coefficients in a RealBallField which approximates F on the
         interval [start, end] mapped to [-1, 1], so that polynomial(1)
         = F(end) for instance.
+
+        EXAMPLES::
+
+            sage: B = BuchstabB(precision=53)
+            sage: [(start, end) for start, end, approximant in B.approximants_list()]
+            [(0, 1), (1, 2), (2, 3)]
+            sage: start, end, approximant = B.approximants_list()[2]
+            sage: approximant(1).overlaps(RBF(1 + log(2)))
+            True
         """
         return [[self._steps[i], self._steps[i + 1], self._approximants[self._steps[i]]] for i in range(len(self._steps) - 1)]
 
@@ -346,37 +395,57 @@ class FriedlanderS(DifferentialDelaySolution):
     - ``precision`` (default: 53) -- the precision, in bits, of the
     ``RealBallField`` the approximants are defined over.
 
-    AUTHORS:
+    EXAMPLES::
 
-    - Sary Drappeau (2026-06)
+        sage: S = FriedlanderS(1/2, precision=53)
+        sage: S(1/4)
+        0
+        sage: S(3/4)
+        1.000000000000000
 
-    AI DISCLOSURE:
+    The jump at `\alpha` has size `1`, and the one at `1` has size `-1`::
 
-    GPT 5.2 provided the basic structure of the class.
+        sage: S = FriedlanderS(2/5, precision=80)
+        sage: eps = QQ(1)/10^12
+        sage: (S(2/5 + eps) - S(2/5 - eps) - 1).abs().upper() < 1e-20
+        True
+        sage: (S(1 + eps) - S(1 - eps) + 1).abs().upper() < 1e-9
+        True
 
-    REFERENCES:
+    Friedlander proved that `\sigma(u, v)` tends to `e^{-\gamma}\rho(u)` as
+    `v \to \infty`, with `\rho` the Dickman function. At `u = 3.1`, over the
+    range of `v` the enclosure can still resolve, the relative gap is at most
+    `7/v`::
 
-    - G. Marsaglia, A. Zaman, J. Marsaglia. "Numerical
-      Solutions to some Classical Differential-Difference Equations."
-      Mathematics of Computation, Vol. 53, No. 187 (1989).
+        sage: u = QQ(31)/10
+        sage: target = RBF(-euler_gamma).exp() * DickmanRho(precision=53)(u)
+        sage: gaps = [(v, 1 - FriedlanderS(u/v, precision=53)(u) / (v * target))
+        ....:         for v in (20, 40, 80, 160)]
+        sage: all((gap.abs() * v).upper() < 7 for v, gap in gaps)
+        True
+
+    The parameter has to be rational, with `0 < \alpha < 1`; a real one is
+    reconstructed as a nearby rational, by continued fractions::
+
+        sage: FriedlanderS(3/2)
+        Traceback (most recent call last):
+        ...
+        ValueError: the parameter alpha should satisfy 0 < alpha < 1
+        sage: FriedlanderS(sqrt(2))
+        Traceback (most recent call last):
+        ...
+        TypeError: the parameter alpha should be rational
+        sage: FriedlanderS(0.4).alpha
+        2/5
 
     """
 
     def __init__(self, alpha, precision=53):
-        # alpha has to be rational: the steps m + n * alpha are compared for
-        # equality as the grid is built, so they have to be exact. A real
-        # argument is accepted, but QQ reconstructs a nearby rational from it
-        # by continued fractions, which gives 2/5 for 0.4 but a denominator in
-        # the millions for a number which is not close to a simple fraction,
-        # and as many steps; pass a Rational to know what is computed.
         try:
             alpha = QQ(alpha)
         except (TypeError, ValueError) as exc:
             raise TypeError("the parameter alpha should be rational") from exc
         if not 0 < alpha < 1:
-            # For alpha >= 1, the interval starting at 1 has no predecessor at
-            # distance alpha, so the recursion never reaches it and its
-            # approximant would be left undefined.
             raise ValueError("the parameter alpha should satisfy "
                              "0 < alpha < 1")
         self.alpha = alpha
@@ -431,7 +500,7 @@ class FriedlanderS(DifferentialDelaySolution):
 
             delayed_one = self._predecessor_leq(current_left - 1)
             if delayed_one is not None:
-                # Below u = 1 there is no delayed term at distance 1 at all.
+                # Below u = 1 there is no delayed term at all.
                 term -= self._expand_quotient(
                     self._approximants[delayed_one](
                         self._to_unit_interval(delayed_one, u - 1)),
@@ -460,6 +529,34 @@ class DickmanRho(DifferentialDelaySolution):
     implementation dickman_rho, the main difference being that it
     returns a RealBallField element, so that the approximation is
     rigorous.
+
+    EXAMPLES::
+
+        sage: rho = DickmanRho(precision=53)
+        sage: rho(1/2)
+        1.000000000000000
+        sage: rho(-1)
+        0
+
+    On `[1, 2]` one has `\rho(u) = 1 - \log u`::
+
+        sage: rho(2).overlaps(RBF(1 - log(2)))
+        True
+        sage: rho(3/2).overlaps(RBF(1 - log(3/2)))
+        True
+
+    At `u = 30`, where `\rho(u) \approx 3.27 \cdot 10^{-50}`, the enclosure
+    contains the value Sage's own floating-point ``dickman_rho`` gives, and the
+    two agree to some thirty digits, which is the width of the enclosure at 300
+    bits. Sage's value is not rigorous, so this is a cross-check and not an
+    enclosure test::
+
+        sage: ours = DickmanRho(precision=300)(30)
+        sage: theirs = RealBallField(300)(dickman_rho(RealField(300)(30)))
+        sage: ours.overlaps(theirs)
+        True
+        sage: ((ours - theirs) / theirs).abs().upper() < 1e-30
+        True
 
     """
 
@@ -502,6 +599,31 @@ class BuchstabB(DifferentialDelaySolution):
         B'(u) = \frac{B(u-1)}{u-1}, \qquad (u > 2),
 
     which is equal to `1` on `[1, 2]`, and to `0` below `1`.
+
+    EXAMPLES::
+
+        sage: B = BuchstabB(precision=53)
+        sage: B(1/2)
+        0
+        sage: B(3/2)
+        1.000000000000000
+
+    On `[2, 3]` one has `B(u) = 1 + \log(u-1)`::
+
+        sage: B(3).overlaps(RBF(1 + log(2)))
+        True
+        sage: B(5/2).overlaps(RBF(1 + log(3/2)))
+        True
+
+    As `u \to \infty`, `\omega(u) = B(u)/u` tends to `e^{-\gamma}`, and at
+    `u = 30` the two already agree to well below the working precision::
+
+        sage: target = RealBallField(200)(-euler_gamma).exp()
+        sage: omega30 = BuchstabB(precision=200)(30) / 30
+        sage: omega30.overlaps(target)
+        True
+        sage: (omega30 - target).abs().upper() < 1e-50
+        True
 
     """
 
