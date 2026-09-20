@@ -9,6 +9,7 @@ described in *Computing sieve integrals using LattE, and the density of integers
 and ``load("computation_of_h.sage")`` in a Sage session started here defines everything and computes nothing.
 Its docstring lists the places where it departs from the notebook.
 * The HTML file ``Plot of h(alpha, beta).html`` contains the 3d surface plot containing our estimate graph of $`h(\alpha, \beta)`$
+* The Dickman, Buchstab and Friedlander classes are loaded from ``../code/number_theoretic_dde_solutions.py``
 * The script ``IncreasingBooleanFunctions.py`` contains the computations relative to Boolean functions which is used in the notebook.
 This will be replaced by the use of Boolean antichains, once we figure out how to pass to the dual.
 * The folder ``data`` contains raw data used for the Boolean functions script.
