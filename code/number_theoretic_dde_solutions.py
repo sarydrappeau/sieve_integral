@@ -15,7 +15,7 @@ Three particular solutions of differential-delay equations of interest in number
 # ****************************************************************************
 
 
-from sage.all import RR, PolynomialRing, floor
+from sage.all import QQ, RR, PolynomialRing, floor
 from sage.rings.real_arb import RealBallField
 from sage.functions.other import ceil
 
@@ -55,6 +55,22 @@ class FriedlanderS:
     """
 
     def __init__(self, alpha, precision=53):
+        # alpha has to be rational: the steps m + n * alpha are compared for
+        # equality as the grid is built, so they have to be exact. A real
+        # argument is accepted, but QQ reconstructs a nearby rational from it
+        # by continued fractions, which gives 2/5 for 0.4 and a denominator in
+        # the millions for a number which is not close to a simple fraction,
+        # with as many steps; pass a Rational to know what is computed.
+        try:
+            alpha = QQ(alpha)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("the parameter alpha should be rational") from exc
+        if not 0 < alpha < 1:
+            # For alpha >= 1, the interval starting at 1 has no predecessor at
+            # distance alpha, so the recursion never reaches it and its
+            # approximant would be left undefined.
+            raise ValueError("the parameter alpha should satisfy "
+                             "0 < alpha < 1")
         self.alpha = alpha
         self._taylor_degree = floor(precision * RR(2).log() / RR(3).log())
 
@@ -254,7 +270,7 @@ class FriedlanderS:
                 if current_left == 1:
                     # Account for the discontinuity at u = 1.
                     self._approximants[current_left] -= 1
-                    self._truncate(current_left)
+                self._truncate(current_left)
 
     def __call__(self, sval):
         """
@@ -276,7 +292,10 @@ class FriedlanderS:
         if current_left is None:
             return scalar_ring(0)
 
-        return self._approximants[current_left](self._to_unit_interval(current_left, sval))
+        # sval is coerced into the ball field before the polynomial is
+        # evaluated, so that an argument of any real type is accepted.
+        return self._approximants[current_left](
+            self._to_unit_interval(current_left, scalar_ring(sval)))
 
     def base_ring(self):
         return self._scalar_ring
