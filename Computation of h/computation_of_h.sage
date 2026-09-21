@@ -14,7 +14,7 @@ or, from a Sage session started here::
     sage: h_bar(0.4, 0.6, 1, precision=(50, 14), verbose=True)
 
 Loading this file defines the functions, loads
-``number_theoretic_dde_solutions.py`` and ``IncreasingBooleanFunctions.py``
+``../code/number_theoretic_dde_solutions.py`` and ``IncreasingBooleanFunctions.py``
 (the latter reads ``data/`` at load time, as it does in the notebook), and
 reads ``list_infos_ab.npz``, which is what ``whichF`` needs. Nothing else
 runs.
@@ -50,7 +50,7 @@ import numpy as np
 
 # --- cell 1 ---------------------------------------------------------------
 
-load("number_theoretic_dde_solutions.py")
+load("../code/number_theoretic_dde_solutions.py")
 
 # --- cell 2 ---------------------------------------------------------------
 

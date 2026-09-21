@@ -37,6 +37,8 @@ The script ``number_theoretic_dde_solutions.py`` defines three classes:
 - ``BuchstabB``: defines the function $u \mapsto u \omega(u)$, where $\omega$ is the [Buchstab ω function](https://en.wikipedia.org/wiki/Buchstab_function).
 - ``FriedlanderS``: defines a variant of the [Friedlander σ function](https://doi.org/10.1112/plms/s3-33.3.565).
 
+The three share a base class ``DifferentialDelaySolution``, which holds the scheme they all follow; a subclass describes the differential equation it solves.
+
 Compared with the current Sage implementation of the Dickman Rho function, their specificity is to carry out the computation in a RealBallField.
 The algorithm is the same as in the Sage ``DickmanRho`` implementation, based on the [Marsaglia-Zaman-Marsaglia method](https://doi.org/10.2307/2008355).
 

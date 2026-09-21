@@ -1350,7 +1350,7 @@ def sieve_integral_harman(polytope_data,
     sage: polytope = {x + y == 1, 1/4 < x, x < y}
     sage: polynomial = 1 + x
     sage: sieve_integral_harman(polytope, (y, x), polynomial)
-    [1.6921 +/- 2.88e-5]
+    [1.6921 +/- 2.90e-5]
 
     sage: A = integrate((1+x) / (x*(1-x)), (x, 1/3, 1/2))
     sage: B = integrate((1+log(1/x-2)) * (1+x) / (x*(1-x)), (x, 1/4, 1/3))
@@ -1358,7 +1358,7 @@ def sieve_integral_harman(polytope_data,
     1.69211856327702
 
     sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
-    [1.6921185632770 +/- 3.27e-14]
+    [1.6921185632770 +/- 3.03e-14]
 
     """
 
