@@ -16,13 +16,16 @@ from sage.geometry.polyhedron.constructor import Polyhedron
 from sage.geometry.polyhedron.base import Polyhedron_base
 from sage.symbolic.expression import Expression
 from tqdm import tqdm
+import os
 
 load("number_theoretic_dde_solutions.py")
 
-# Set the following to 1 if you do not wish to parallelize the
-# computation.
+# How many worker processes the pieces of a balanced polytope are mapped
+# over, unless a ``processes`` argument says otherwise. Set it to 1 if you
+# do not wish to parallelize the computation; the result does not depend
+# on it.
 
-NUM_PROCESSORS = 7
+NUM_PROCESSORS = max(1, (os.cpu_count() or 2) - 1)
 
 
 def expression_to_polynomial(expression, variables):
@@ -187,25 +190,27 @@ def symbolic_to_eqns(expressions):
     ieqs = []
     eqns = []
     variables = set()
-    for expr in expressions:
-        for x in expr.variables():
-            variables.add(x)
-    variables = sorted(variables, key = str)
     for expression in expressions:
         if not isinstance(expression, Expression):
-            raise ValueError
-        if expression.operator() not in (le, ge, lt, gt, eq):
-            raise ValueError
-        try:
-            polynomial, generators = expression_to_polynomial(
-                expression.lhs() - expression.rhs(),
-                variables
-            )
-        except ValueError as exc:
             raise ValueError(
-                "It is likely that one of the inequalities provided "
-                "involves non-polynomial terms."
-            ) from exc
+                "Expected a symbolic equality or inequality, "
+                f"got {expression!r}."
+            )
+        if expression.operator() not in (le, ge, lt, gt, eq):
+            raise ValueError(
+                f"The expression {expression!r} is not an equality "
+                "or an inequality."
+            )
+        variables.update(expression.variables())
+    variables = sorted(variables, key = str)
+    for expression in expressions:
+        # ``variables`` holds the variables of every expression, so
+        # expression_to_polynomial cannot raise its ValueError here; a
+        # non-polynomial expression raises TypeError, which propagates.
+        polynomial, generators = expression_to_polynomial(
+            expression.lhs() - expression.rhs(),
+            variables
+        )
 
         if expression.operator() in (le, lt):
             polynomial = -polynomial
@@ -276,7 +281,7 @@ def are_inequalities_compatible(ieqs, border = False):
         lin_prog.add_constraint(
             ieq[0] + sum(x[j] * ieq[j] for j in range(1, dim+1)) >= 0
         )
-        lin_prog.set_objective(None)
+    lin_prog.set_objective(None)
     try:
         lin_prog.solve(objective_only = True)
         return True
@@ -1213,6 +1218,40 @@ def balance_polytope(polytope, facteur, verbose = 0):
     return split_polytopes
 
 
+def sum_over_pieces(process_piece, pieces, processes = None):
+    r"""
+    Map ``process_piece`` over ``pieces`` and add up the values.
+
+    INPUT:
+
+    - ``process_piece`` -- a callable taking one PolytopeSummary. It must
+    be importable by name, since a pool of workers pickles it.
+
+    - ``pieces`` -- a list of PolytopeSummary objects.
+
+    - ``processes`` (default: ``None``) -- the number of worker
+    processes, ``NUM_PROCESSORS`` if ``None``. A pool is used only above
+    twenty pieces, below which setting it up costs more than it saves.
+
+    OUTPUT: the sum of the values, in a RealBallField.
+
+    The values are added smallest first, which keeps the radius of the
+    sum from growing by the rounding of the partial sums.
+
+    EXAMPLES::
+
+        sage: sum_over_pieces(lambda piece: RBF(piece), [1, 2, 3])
+        6.000000000000000
+    """
+
+    if len(pieces) > 20:
+        with pool(NUM_PROCESSORS if processes is None else processes) as p:
+            values = p.map(process_piece, pieces)
+    else:
+        values = [process_piece(piece) for piece in pieces]
+    return sum(sorted(values))
+
+
 def process_polytope(polytope_summary,
                      scalar_field,
                      verbose = 0):
@@ -1221,7 +1260,7 @@ def process_polytope(polytope_summary,
     polytope. This function is for use in multiprocessing.
 
     """
-    border, mini, maxi, vol = polytope_summary.unpack()[1:]
+    mini, maxi, vol = polytope_summary.unpack()[2:]
     dim = len(mini)
     # Compute the largest ratio between values, in each dimension,
     # and use this value to estimate how far we need to truncate
@@ -1239,7 +1278,8 @@ def process_polytope(polytope_summary,
 
 
 
-def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
+def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
+                   processes = None, verbose = 0):
     r"""
     Compute the integral over the given polytope of
     ``dt_1 ... dt_d / t_1 ... t_d``.
@@ -1261,6 +1301,9 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
     in the decomposition.
 
     - ``facteur`` -- a number greater than 1.
+
+    - ``processes`` (default: ``None``) -- the number of worker processes
+    the pieces are mapped over, ``NUM_PROCESSORS`` if ``None``.
 
     - ``verbose`` (default: False) -- if positive, will print updates on the
     computation.
@@ -1357,17 +1400,9 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
     process_polytope_partial = partial(process_polytope,
                                        scalar_field = scalar_field,
                                        verbose = verbose - 1)
-
-    # Parallelize only if there are sufficiently many polytopes; there
-    # is a bit of overhead in setting up the multiprocessing.
-    if len(balanced_polytopes)>20:
-        with pool(NUM_PROCESSORS) as p:
-            reslist = p.map(process_polytope_partial,
-                            balanced_polytopes)
-    else:
-        reslist = [process_polytope_partial(balanced_polytope)
-                   for balanced_polytope in balanced_polytopes]
-    sum_values = sum(sorted(reslist))
+    sum_values = sum_over_pieces(process_polytope_partial,
+                                 balanced_polytopes,
+                                 processes)
     printifdbg(f"sieve_integral returning {sum_values}")
     return sum_values
 
@@ -1421,6 +1456,8 @@ def sieve_integral_harman(polytope_data,
                           buchstab_variables,
                           integrand_polynomial_data = None,
                           precision = 20,
+                          facteur = 1.3,
+                          processes = None,
                           verbose = 0):
     r"""
     Compute the integral over a polytope of the function given by
@@ -1444,6 +1481,12 @@ def sieve_integral_harman(polytope_data,
     ambient dimension.
 
     - ``precision`` (default: 20) -- the requested precision, in bits.
+
+    - ``facteur`` (default: 1.3) -- a number greater than 1, controlling how
+    finely the polytope is sliced, as in :func:`sieve_integral`.
+
+    - ``processes`` (default: ``None``) -- the number of worker processes
+    the pieces are mapped over, ``NUM_PROCESSORS`` if ``None``.
 
     - ``verbose`` (default: 0) -- if positive, gives information on the
     computation.
@@ -1596,6 +1639,8 @@ def sieve_integral_harman(polytope_data,
             None,
             None,
             polynomial2 = integrand_polynomial,
+            facteur = facteur,
+            processes = processes,
             verbose = verbose,
             precision = precision
         )
@@ -1648,6 +1693,8 @@ def sieve_integral_harman(polytope_data,
                 QQ((left_endpoint + right_endpoint)/2),
                 buchstab_indices,
                 polynomial2 = integrand_polynomial,
+                facteur = facteur,
+                processes = processes,
                 verbose = verbose,
                 precision = precision
             )
@@ -1661,6 +1708,8 @@ def sieve_integral_polyratio(polytope,
                              midpt,
                              ratio_idx,
                              polynomial2 = None,
+                             facteur = 1.3,
+                             processes = None,
                              verbose = 0,
                              precision = 20):
     """
@@ -1688,7 +1737,9 @@ def sieve_integral_polyratio(polytope,
     )
     majorant_integrant = majorant_polynomial1 * majorant_polynomial2
     majorant_product = 1/prod(mini)
-    trivial_bound = (polytope.volume(measure = 'induced_rational')
+    trivial_bound = (polytope.volume(engine = 'latte',
+                                     algorithm = 'cone-decompose',
+                                     measure = 'induced_rational')
                      * majorant_product * majorant_integrant)
 
     if trivial_bound < 2**(-precision):
@@ -1697,7 +1748,7 @@ def sieve_integral_polyratio(polytope,
         return scalar_field(trivial_bound/2, rad = trivial_bound/2)
 
     split_polytopes = balance_polytope(polytope,
-                                       facteur = 1.3,
+                                       facteur = facteur,
                                        verbose = verbose - 1)
     process_polytope_partial = partial(process_polytope_polyratio,
                                        scalar_field = scalar_field,
@@ -1706,13 +1757,9 @@ def sieve_integral_polyratio(polytope,
                                        polynomial2 = polynomial2,
                                        ratio_idx = ratio_idx,
                                        verbose = verbose - 1)
-    if len(split_polytopes) > 20:
-        with pool(NUM_PROCESSORS) as p:
-            values = p.map(process_polytope_partial, split_polytopes)
-    else:
-        values = [process_polytope_partial(polytope_summary)
-                  for polytope_summary in split_polytopes]
-    sum_values = sum(sorted(values))
+    sum_values = sum_over_pieces(process_polytope_partial,
+                                 split_polytopes,
+                                 processes)
     printifdbg(f"sieve_integral_polyratio returning {sum_values}")
     return sum_values
 
@@ -1736,7 +1783,7 @@ def process_polytope_polyratio(polytope_summary,
     to integrate this into the sage libraries.
     """
 
-    border, mini, maxi, vol = polytope_summary.unpack()[1:]
+    mini, maxi, vol = polytope_summary.unpack()[2:]
     dim = len(mini)
     facteur = max(maxi[j]/mini[j] for j in range(dim))
     truncation_degree, prod_rel_error = (
