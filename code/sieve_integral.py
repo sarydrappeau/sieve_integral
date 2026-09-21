@@ -590,9 +590,10 @@ def latte_integrate(polytope, polynomial = None):
         ...
         NotImplementedError: The last coordinate cannot be eliminated: its
         coefficient in the equation of the polytope is zero. Permute the order
-        of the variables, or use polytope.integrate(..., measure='induced')
-        instead.
-        sage: polytope.integrate(t1 * t2, measure = 'induced')
+        of the variables, or use polytope.integrate(..., measure='induced',
+        algorithm='cone-decompose') instead.
+        sage: polytope.integrate(t1 * t2, measure = 'induced',
+        ....:                    algorithm = 'cone-decompose')
         3/2
 
     Two equations or more are not handled::
@@ -609,8 +610,9 @@ def latte_integrate(polytope, polynomial = None):
         ...
         NotImplementedError: The latte_integrate helper function is not designed
         for polytopes with two defining equations or more. Use
-        polytope.integrate(...) instead.
-        sage: polytope.integrate((v1*v2*v3*v4*v5)^2, measure="induced")
+        polytope.integrate(..., algorithm='cone-decompose') instead.
+        sage: polytope.integrate((v1*v2*v3*v4*v5)^2, measure="induced",
+        ....:                    algorithm="cone-decompose")
         8/27
     """
     
@@ -619,8 +621,8 @@ def latte_integrate(polytope, polynomial = None):
         # of type sum_j r_j x_j = 1
         raise NotImplementedError(
             "The latte_integrate helper function is not designed for "
-            "polytopes with two defining equations or more. "
-            "Use polytope.integrate(...) instead."
+            "polytopes with two defining equations or more. Use "
+            "polytope.integrate(..., algorithm='cone-decompose') instead."
         )
 
     if not polytope.equations_list():
@@ -639,8 +641,8 @@ def latte_integrate(polytope, polynomial = None):
         raise NotImplementedError(
             "The last coordinate cannot be eliminated: its coefficient "
             "in the equation of the polytope is zero. Permute the order "
-            "of the variables, or use "
-            "polytope.integrate(..., measure='induced') instead."
+            "of the variables, or use polytope.integrate("
+            "..., measure='induced', algorithm='cone-decompose') instead."
         )
 
     dim = polytope.ambient_dimension()
@@ -884,7 +886,8 @@ def balanced_polytope_integrate(polytope_summary,
         sage: # optional - latte_int
         sage: x, y, z = var("x, y, z")
         sage: approximant = taylor(1/(x*y*z), (x, 5), (y, 5), (z, 5), 2)
-        sage: polytope.integrate(approximant.polynomial(QQ))
+        sage: polytope.integrate(approximant.polynomial(QQ),
+        ....:                    algorithm = 'cone-decompose')
         208/3125
         sage: RR(208/3125)
         0.0665600000000000
@@ -915,7 +918,8 @@ def balanced_polytope_integrate(polytope_summary,
         (0.810666666666666, 0.810666666666667)
         sage: approximant = taylor(1/(x*y), (x, 1/2), (y, 1/2), 2)
         sage: RR(polytope.integrate(approximant.polynomial(QQ),
-        ....:                       measure = "induced") / sqrt(2))
+        ....:                       measure = "induced",
+        ....:                       algorithm = "cone-decompose") / sqrt(2))
         0.810666666666667
 
     and again the expansion converges to the exact value::

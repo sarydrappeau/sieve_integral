@@ -1,0 +1,61 @@
+# Doctests of code/ and the quick test suite, on the environment of
+# environment.yml (released Sage and LattE, conda-forge).
+
+name: doctests and quick tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        # A login shell, so that the conda environment is active.
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sage's packages are several gigabytes: if the cache turns out
+      # to be slower than the download, or to crowd out the
+      # repository's 10 GB, drop this step.
+      - name: Cache the conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/conda_pkgs_dir
+          key: conda-${{ runner.os }}-${{ hashFiles('environment.yml') }}
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: sieve-integral
+          miniforge-version: latest
+
+      - name: Versions
+        run: |
+          sage --version
+          conda list 'sage|latte'
+
+      # sage -t runs a block marked "# optional - <feature>" only where it
+      # detects the feature. environment.yml provides latte_int, so the
+      # LattE examples run; the modified LattE of step 12 is not part of
+      # it, so anything marked latte_split stays skipped.
+      - name: Doctests
+        working-directory: code
+        run: sage -t --long number_theoretic_dde_solutions.py sieve_integral.py
+
+      # The micro-benchmarks are tagged "timing", which the runner
+      # selects only with --only-timing: here, without a flag, they are
+      # not selected.
+      - name: Quick test suite
+        if: ${{ !cancelled() }}
+        run: sage tests/run_tests.sage
