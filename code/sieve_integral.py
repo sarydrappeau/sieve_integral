@@ -46,27 +46,29 @@ def expression_to_polynomial(expression, variables):
     - generators of its polynomial ring, in the same order as the
     variables.
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: var("a, b, c")
-    (a, b, c)
+        sage: var("a, b, c")
+        (a, b, c)
+        sage: expression_to_polynomial(c^2 - a + 2*b + 4, (a, b, c))
+        (x2^2 - x0 + 2*x1 + 4, (x0, x1, x2))
+        sage: expression_to_polynomial(c^2 - a + 2*b + 4, (c, b, a))
+        (x0^2 + 2*x1 - x2 + 4, (x0, x1, x2))
 
-    sage: expression_to_polynomial(c^2 - a + 2*b + 4, (a, b, c))
-    (x2^2 - x0 + 2*x1 + 4, (x0, x1, x2))
+    The expression must be polynomial, with rational coefficients::
 
-    sage: expression_to_polynomial(c^2 - a + 2*b + 4, (c, b, a))
-    (x0^2 + 2*x1 - x2 + 4, (x0, x1, x2))
+        sage: expression_to_polynomial(sin(a) + b, (a, b))
+        Traceback (most recent call last):
+        ...
+        TypeError: The expression to be converted does not coerce to a
+        rational polynomial.
 
-    sage: expression_to_polynomial(sin(a) + b, (a, b))
-    TypeError     Traceback (most recent call last)
-    ...
-    TypeError: The expression to be converted does not coerce to a
-    rational polynomial.
+    and all of its variables must be listed::
 
-    sage: expression_to_polynomial(a^2 + b - c, (a, b))
-    ValueError    Traceback (most recent call last)
-    ...
-    ValueError: Expression contains variables not in the variable list
+        sage: expression_to_polynomial(a^2 + b - c, (a, b))
+        Traceback (most recent call last):
+        ...
+        ValueError: Expression contains variables not in the variable list
     """
 
 
@@ -103,24 +105,22 @@ def polynomial_to_equation(polynomial, generators):
     ``i``-th generator in ``polynomial``.
 
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: R.<x, y, z, t> = PolynomialRing(QQ)
+        sage: R.<x, y, z, t> = PolynomialRing(QQ)
+        sage: generators = R.gens(); generators
+        (x, y, z, t)
+        sage: polynomial_to_equation(x + 3*y - z + 3, generators)
+        (3, 1, 3, -1, 0)
+        sage: polynomial_to_equation(x + y + z + t - 1, generators)
+        (-1, 1, 1, 1, 1)
 
-    sage: generators = R.gens(); generators
-    (x, y, z, t)
+    The polynomial has to be of degree at most one::
 
-    sage: polynomial_to_equation(x + 3*y - z + 3, generators)
-    (3, 1, 3, -1, 0)
-
-    sage: polynomial_to_equation(x + y + z + t - 1, generators)
-    (-1, 1, 1, 1, 1)
-
-    sage: polynomial_to_equation(x^2 + y, generators)
-    ValueError                   Traceback (most recent call last)
-    ...
-    ValueError: The polynomial should be affine linear.
-
+        sage: polynomial_to_equation(x^2 + y, generators)
+        Traceback (most recent call last):
+        ...
+        ValueError: The polynomial should be affine linear.
     """
 
     if polynomial.degree() > 1:
@@ -157,34 +157,34 @@ def symbolic_to_eqns(expressions):
     The rows follow the order in which ``expressions`` is iterated: pass
     a list rather than a set if that order matters to you.
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: from operator import le, ge, lt, gt, eq
+        sage: var("a, b, c")
+        (a, b, c)
+        sage: symbolic_to_eqns([2*a + b - c <= 0, a > c, b + a == 3*c])
+        ([(0, 1, 1, -3)], [(0, -2, -1, 1), (0, 1, 0, -1)], [a, b, c])
+        sage: symbolic_to_eqns([a == 2*b, b == 2*a, a + b >= 0])
+        ([(0, 1, -2), (0, -2, 1)], [(0, 1, 1)], [a, b])
 
-    sage: var("a, b, c")
+    The coefficients have to be rational::
 
-    sage: symbolic_to_eqns([2*a + b - c <= 0, a > c, b + a == 3*c])
-    ([(0, 1, 1, -3)], [(0, -2, -1, 1), (0, 1, 0, -1)], [a, b, c])
+        sage: symbolic_to_eqns([sqrt(2) * a >= b])
+        Traceback (most recent call last):
+        ...
+        TypeError: The expression to be converted does not coerce to a
+        rational polynomial.
 
-    sage: symbolic_to_eqns([a == 2*b, b == 2*a, a + b >= 0])
-    ([(0, 1, -2), (0, -2, 1)], [(0, 1, 1)], [a, b])
+    and the constraints affine linear::
 
-    sage: symbolic_to_eqns({sqrt(2) * a >= b})
-    TypeError                    Traceback (most recent call last)
-    ...
-    TypeError: The expression to be converted does not coerce
-    to a rational polynomial.
+        sage: symbolic_to_eqns([a^2 <= b, a == 0, b == 0])
+        Traceback (most recent call last):
+        ...
+        ValueError: It is likely that one of the inequalities provided
+        involves non-linear terms.
 
-    sage: symbolic_to_eqns({a^2 <= b, a == 0, b == 0})
-    ValueError                   Traceback (most recent call last)
-    ...
-    ValueError: It is likely that one of the inequalities provided
-    involves non-linear terms.
-    
     .. SEEALSO::
 
-    :meth:`sage.geometry.polyhedron.constructor.Polyhedron`
-
+        :meth:`sage.geometry.polyhedron.constructor.Polyhedron`
     """
 
     ieqs = []
@@ -204,9 +204,6 @@ def symbolic_to_eqns(expressions):
         variables.update(expression.variables())
     variables = sorted(variables, key = str)
     for expression in expressions:
-        # ``variables`` holds the variables of every expression, so
-        # expression_to_polynomial cannot raise its ValueError here; a
-        # non-polynomial expression raises TypeError, which propagates.
         polynomial, generators = expression_to_polynomial(
             expression.lhs() - expression.rhs(),
             variables
@@ -245,23 +242,23 @@ def are_inequalities_compatible(ieqs, border = False):
 
     TESTS:
 
-    sage: from sage.numerical.mip import MIPSolverException
+    Here `0 \leq x \leq y` and `x + y \leq 1`::
 
-    sage: # Testing {0 ≤ x ≤ y and x + y ≤ 1}
-    sage: ieqs = [(1, -1, -1), (0, -1, 1), (0, 1, 0)]
-    sage: are_inequalities_compatible(ieqs)
-    True
+        sage: ieqs = [(1, -1, -1), (0, -1, 1), (0, 1, 0)]
+        sage: are_inequalities_compatible(ieqs)
+        True
 
-    sage: # Testing {2 ≤ x and 2 ≤ y and x + y ≤ 3}
-    sage: ieqs = [(3, -1, -1), (-2, 1, 0), (-2, 0, 1)]
-    sage: are_inequalities_compatible(ieqs)
-    False
+    here `2 \leq x`, `2 \leq y` and `x + y \leq 3`::
 
-    sage: # Testing {x, y, z ≥ 1/2 and x + y + z = 1}
-    sage: ieqs = [(-1/2, 1, 0, 0), (-1/2, 0, 1, 0), (-1/2, 0, 0, 1)]
-    sage: are_inequalities_compatible(ieqs, border = True)
-    False
+        sage: ieqs = [(3, -1, -1), (-2, 1, 0), (-2, 0, 1)]
+        sage: are_inequalities_compatible(ieqs)
+        False
 
+    and here `x, y, z \geq 1/2` together with `x + y + z = 1`::
+
+        sage: ieqs = [(-1/2, 1, 0, 0), (-1/2, 0, 1, 0), (-1/2, 0, 0, 1)]
+        sage: are_inequalities_compatible(ieqs, border = True)
+        False
     """
 
     if not ieqs:
@@ -310,19 +307,20 @@ def polytope_if_dim(ieqs, dim, border):
     from the parameters ``dim`` and ``border``.
 
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: ieqs = [(1, -1, -1), (0, 1, 0), (0, -1, 1)]
-    sage: polytope_if_dim(ieqs, 2, False)
-    A 2-dimensional polyhedron in QQ^2 defined as the convex hull of
-    3 vertices
+        sage: ieqs = [(1, -1, -1), (0, 1, 0), (0, -1, 1)]
+        sage: polytope_if_dim(ieqs, 2, False)
+        A 2-dimensional polyhedron in QQ^2 defined as the convex hull of
+        3 vertices
 
-    sage: polytope_if_dim(ieqs, 3, False)
-    None
+    ``None`` is returned when the dimension is not the expected one::
 
-    sage: ieqs = [(1, -1, -1), (0, 1, -1), (0, -1, 1)]
-    sage: polytope_if_dim(ieqs, 2, False)
-    None
+        sage: polytope_if_dim(ieqs, 3, False) is None
+        True
+        sage: ieqs = [(1, -1, -1), (0, 1, -1), (0, -1, 1)]
+        sage: polytope_if_dim(ieqs, 2, False) is None
+        True
     """
 
     if are_inequalities_compatible(ieqs, border):
@@ -417,7 +415,7 @@ def make_ieq_fulldim_from_eqn(ieq, eqn):
     The last coefficient of ``eqn`` must be nonzero::
 
         sage: make_ieq_fulldim_from_eqn((1, 2, 3), (4, 5, 0))
-        ValueError              Traceback (most recent call last):
+        Traceback (most recent call last):
         ...
         ValueError: Cannot eliminate the target variable. Check its
         coefficient in the equality
@@ -427,7 +425,7 @@ def make_ieq_fulldim_from_eqn(ieq, eqn):
         sage: make_ieq_fulldim_from_eqn((0, 0, 1), (1, -1, 2))
         (-1/2, 1/2)
 
-    SEEALSO::
+    .. SEEALSO::
 
         :class:`~sage.geometry.polyhedron.constructor.Polyhedron`,
         for details on the format of equalities and inequalities.
@@ -460,53 +458,60 @@ def latte_integrate(polytope, polynomial = None):
     the cone decomposition method.
 
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: polytope = Polyhedron([(0, 0), (0, 1), (1, 0)])
-    sage: R.<t1, t2> = PolynomialRing(QQ)
-    sage: latte_integrate(polytope, t1 * t2^2)
-    1/60
+        sage: # optional - latte_int
+        sage: R.<t1, t2> = PolynomialRing(QQ)
+        sage: polytope = Polyhedron([(0, 0), (0, 1), (1, 0)])
+        sage: latte_integrate(polytope, t1 * t2^2)
+        1/60
 
-    sage: polytope = Polyhedron(eqns = [(-3, 1, 2)],
-                                ieqs = [(0, 1, 0), (0, 0, 1)])
-    sage: latte_integrate(polytope, t1 * t2^2)
-    27/16
-    
-    sage: polytope = polytopes.simplex(2)
-    sage: R.<t1, t2, t3> = PolynomialRing(QQ)
-    sage: latte_integrate(polytope, t1 * t2^2 * t3^3)
-    1/3360
+    With one equation, the integration is with respect to every
+    coordinate but the last::
 
-    sage: polytope = Polyhedron(eqns = [(-1, 1, 0)],
-                                ieqs = [(0, 1, 0), (0, -1, 1), (2, 0, -1)])
-    sage: R.<t1, t2> = PolynomialRing(QQ, 2)
-    sage: latte_integrate(polytope, t1 * t2)
-    NotImplementedError                       Traceback (most recent call last)
-    ...
-    NotImplementedError: The last coordinate cannot be eliminated: its
-    coefficient in the equation of the polytope is zero. Permute the order
-    of the variables, or use polytope.integrate(..., measure='induced')
-    instead.
-    sage: polytope.integrate(t1 * t2, measure = 'induced')
-    3/2
+        sage: # optional - latte_int
+        sage: polytope = Polyhedron(eqns = [(-3, 1, 2)],
+        ....:                       ieqs = [(0, 1, 0), (0, 0, 1)])
+        sage: latte_integrate(polytope, t1 * t2^2)
+        27/16
+        sage: S.<u1, u2, u3> = PolynomialRing(QQ)
+        sage: latte_integrate(polytopes.simplex(2), u1 * u2^2 * u3^3)
+        1/3360
 
-    sage: polytope = (polytopes.hypercube(5)
-                      .faces(face_dimension=3)[0]
-                      .as_polyhedron(base_ring = QQ))
-    sage: polytope
-    A 3-dimensional polyhedron in QQ^5 defined as the convex hull of 8 vertices
-    
-    sage: R.<t1, t2, t3, t4, t5> = PolynomialRing(QQ)
-    sage: latte_integrate(polytope, (t1*t2*t3*t4*t5)^2)
-    NotImplementedError                       Traceback (most recent call last)
-    ...
-    NotImplementedError: The latte_integrate helper function is not designed
-    for polytopes with two defining equations or more. Use
-    polytope.integrate(...) instead.
-    
-    sage: polytope.integrate((t1*t2*t3*t4*t5)^2, measure="induced")
-    8/27
+    When the last coefficient of the equation vanishes, the last
+    coordinate cannot be eliminated, and the measure this routine
+    documents is not the one the caller means::
 
+        sage: # optional - latte_int
+        sage: polytope = Polyhedron(eqns = [(-1, 1, 0)],
+        ....:                       ieqs = [(0, 1, 0), (0, -1, 1), (2, 0, -1)])
+        sage: latte_integrate(polytope, t1 * t2)
+        Traceback (most recent call last):
+        ...
+        NotImplementedError: The last coordinate cannot be eliminated: its
+        coefficient in the equation of the polytope is zero. Permute the order
+        of the variables, or use polytope.integrate(..., measure='induced')
+        instead.
+        sage: polytope.integrate(t1 * t2, measure = 'induced')
+        3/2
+
+    Two equations or more are not handled::
+
+        sage: # optional - latte_int
+        sage: polytope = (polytopes.hypercube(5)
+        ....:             .faces(face_dimension=3)[0]
+        ....:             .as_polyhedron(base_ring = QQ))
+        sage: polytope
+        A 3-dimensional polyhedron in QQ^5 defined as the convex hull of 8 vertices
+        sage: T.<v1, v2, v3, v4, v5> = PolynomialRing(QQ)
+        sage: latte_integrate(polytope, (v1*v2*v3*v4*v5)^2)
+        Traceback (most recent call last):
+        ...
+        NotImplementedError: The latte_integrate helper function is not designed
+        for polytopes with two defining equations or more. Use
+        polytope.integrate(...) instead.
+        sage: polytope.integrate((v1*v2*v3*v4*v5)^2, measure="induced")
+        8/27
     """
     
     if len(polytope.equations_list()) not in (0, 1):
@@ -588,46 +593,40 @@ class PolytopeSummary(SageObject):
 
 
     
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: polytope = polytopes.hypercube(3); polytope
-        A 3-dimensional polyhedron in ZZ^3 defined as the convex hull
-        of 8 vertices
-        sage: summary = PolytopeSummary(polytope)
+        sage: # optional - latte_int
+        sage: polytope = polytopes.hypercube(3); polytope
+        A 3-dimensional polyhedron in ZZ^3 defined as the convex hull of 8 vertices
+        sage: summary = PolytopeSummary(polytope); summary
+        Polytope summary data with 6 inequalities, full-dimensional, and volume 8
+        sage: ieqs, border, mini, maxi, volume = summary.unpack()
+        sage: border, mini, maxi, volume
+        (False, (-1, -1, -1), (1, 1, 1), 8)
+
+    On the hyperplane `\sum_i x_i = 1` the volume is the one induced on
+    that hyperplane, and ``border`` is ``True``::
+
+        sage: # optional - latte_int
+        sage: summary = PolytopeSummary(polytopes.simplex(2)); summary
+        Polytope summary data with 3 inequalities, cut out by the equation
+        (-1, 1, ..., 1), and volume 1/2
         sage: summary.unpack()
-        ([[1, -1, 0, 0],
-        ...
-        [1, 0, 1, 0]],
-        False,
-        (-1, -1, -1),
-        (1, 1, 1),
-        8)
+        ([[1, 0, -1, -1], [0, 0, 1, 0], [0, 0, 0, 1]], True, (0, 0, 0), (1, 1, 1), 1/2)
 
-    sage: polytope = polytopes.simplex(2); polytope
-        A 2-dimensional polyhedron in ZZ^3 defined as the convex hull
-        of 3 vertices
-        sage: summary = PolytopeSummary(polytope)
-        sage: summary.unpack()
-        ([[1, 0, -1, -1], [0, 0, 1, 0], [0, 0, 0, 1]],
-        True,
-        (0, 0, 0),
-        (1, 1, 1),
-        1/2)
+    Any other polytope is rejected::
 
-    sage: polytope = (polytopes.hypercube(5)
-                      .faces(face_dimension=3)[0]
-                      .as_polyhedron(base_ring = QQ))
+        sage: # optional - latte_int
+        sage: polytope = (polytopes.hypercube(5)
+        ....:             .faces(face_dimension=3)[0]
+        ....:             .as_polyhedron(base_ring = QQ))
         sage: polytope
-        A 3-dimensional polyhedron in QQ^5 defined as the convex hull of
-        8 vertices
-        sage: summary = PolytopeSummary(polytope)
-        NotImplementedError               Traceback (most recent call last)
+        A 3-dimensional polyhedron in QQ^5 defined as the convex hull of 8 vertices
+        sage: PolytopeSummary(polytope)
+        Traceback (most recent call last):
         ...
         NotImplementedError: The polytope should be full-dimensional, or
-    else cut out by the single equation (-1, 1, ..., 1).
-
-
-
+        else cut out by the single equation (-1, 1, ..., 1).
     """
 
     def __init__(self, polytope):
@@ -705,27 +704,25 @@ def eqn_sum_one(dim):
 
     - the tuple ``(-1, 1, ..., 1)``, where ``1`` is repeated ``dim`` times.
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: eqn_sum_one(4)
-    (-1, 1, 1, 1, 1)
+        sage: eqn_sum_one(4)
+        (-1, 1, 1, 1, 1)
+        sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)])
+        sage: polytope
+        A 1-dimensional polyhedron in QQ^2 defined as the convex hull of
+        1 vertex and 1 line
+        sage: polytope.equations()
+        (An equation (1, 1) x - 1 == 0,)
+        sage: Polyhedron(eqns = [eqn_sum_one(0)])
+        The empty polyhedron in QQ^0
 
-    sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)])
-    sage: polytope
-    A 1-dimensional polyhedron in QQ^2 defined as the convex hull of
-    1 vertex and 1 line
+    The dimension has to be non-negative::
 
-    sage: polytope.equations()
-    (An equation (1, 1) x - 1 == 0,)
-
-    sage: Polyhedron(eqns = [eqn_sum_one(0)])
-    The empty polyhedron in QQ^0
-
-    sage: eqn_sum_one(-2)
-    ValueError                        Traceback (most recent call last)
-    ...
-    ValueError: The dimension should be non-negative.
-
+        sage: eqn_sum_one(-2)
+        Traceback (most recent call last):
+        ...
+        ValueError: The dimension should be non-negative.
     """
 
     if dim<0:
@@ -770,59 +767,69 @@ def balanced_polytope_integrate(polytope_summary,
 
     EXAMPLES:
 
-    sage: polytope = polytopes.hypercube(3) + vector((5, 5, 5))
-    sage: sage: polytope.bounding_box()
-    ((4, 4, 4), (6, 6, 6))
+    Truncating the Taylor expansion early returns the integral of the
+    truncation, not of `1/xyz`::
 
-    sage: balanced_polytope_integrate(PolytopeSummary(polytope),
-                                      truncation_degree = 4,
-                                      scalar_field = RBF).endpoints()
-    (0.0665599999999999, 0.0665600000000001)
+        sage: # optional - latte_int
+        sage: polytope = polytopes.hypercube(3) + vector((5, 5, 5))
+        sage: polytope.bounding_box()
+        ((4, 4, 4), (6, 6, 6))
+        sage: balanced_polytope_integrate(PolytopeSummary(polytope),
+        ....:                             truncation_degree = 4,
+        ....:                             scalar_field = RBF).endpoints()
+        (0.0665599999999999, 0.0665600000000001)
 
-    sage: approximant = taylor(1/(x*y*z), (x, 5), (y, 5), (z, 5), 2)
-    sage: polynomial = approximant.polynomial(QQ)
-    sage: polytope.integrate(polynomial)
-    208/3125
+    which is what integrating that truncation directly gives::
 
-    sage: RR(208/3125)
-    0.0665600000000000
+        sage: # optional - latte_int
+        sage: x, y, z = var("x, y, z")
+        sage: approximant = taylor(1/(x*y*z), (x, 5), (y, 5), (z, 5), 2)
+        sage: polytope.integrate(approximant.polynomial(QQ))
+        208/3125
+        sage: RR(208/3125)
+        0.0665600000000000
 
-    sage: RR(log(6/4)^3)
-    0.0666592560084858
+    Taking the expansion further converges to the true value
+    `\log(6/4)^3`::
 
-    sage: balanced_polytope_integrate(PolytopeSummary(polytope),
-    ....:                             truncation_degree = 23,
-    ....:                             scalar_field = RBF).endpoints()
-    (0.0666592560084857, 0.0666592560084858)
+        sage: # optional - latte_int
+        sage: RR(log(6/4)^3)
+        0.0666592560084858
+        sage: balanced_polytope_integrate(PolytopeSummary(polytope),
+        ....:                             truncation_degree = 23,
+        ....:                             scalar_field = RBF).endpoints()
+        (0.0666592560084857, 0.0666592560084858)
 
+    The same on the hyperplane `x + y = 1`, where the integral is taken
+    with respect to `dx` alone::
 
-    sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)],
-                                ieqs = [(-2/5, 1, 0), (-2/5, 0, 1)])
-    sage: polytope.bounding_box()
-    ((2/5, 2/5), (3/5, 3/5))
+        sage: # optional - latte_int
+        sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)],
+        ....:                       ieqs = [(-2/5, 1, 0), (-2/5, 0, 1)])
+        sage: polytope.bounding_box()
+        ((2/5, 2/5), (3/5, 3/5))
+        sage: summary = PolytopeSummary(polytope)
+        sage: balanced_polytope_integrate(summary,
+        ....:                             truncation_degree = 3,
+        ....:                             scalar_field = RBF).endpoints()
+        (0.810666666666666, 0.810666666666667)
+        sage: approximant = taylor(1/(x*y), (x, 1/2), (y, 1/2), 2)
+        sage: RR(polytope.integrate(approximant.polynomial(QQ),
+        ....:                       measure = "induced") / sqrt(2))
+        0.810666666666667
 
-    sage: summary = PolytopeSummary(polytope)
-    sage: balanced_polytope_integrate(summary,
-    ....:                             truncation_degree = 3,
-    ....:                             scalar_field = RBF).endpoints()
-    (0.810666666666666, 0.810666666666667)
+    and again the expansion converges to the exact value::
 
-    sage: approximant = taylor(1/(x*y), (x, 1/2), (y, 1/2), 2)
-    sage: polynomial = approximant.polynomial(QQ)
-    sage: RR(polytope.integrate(polynomial, measure = "induced") / sqrt(2))
-    0.810666666666667
-
-    sage: exact_value = integrate(1 / (x*(1-x)), (x, 2/5, 3/5))
-    sage: exact_value
-    2*log(3/5) - 2*log(2/5)
-    sage: RR(exact_value)
-    0.810930216216329
-
-    sage: balanced_polytope_integrate(summary,
-    ....:                             truncation_degree = 25,
-    ....:                             scalar_field = RBF).endpoints()
-    (0.810930216216328, 0.810930216216329)
-
+        sage: # optional - latte_int
+        sage: exact_value = integrate(1 / (x*(1-x)), (x, 2/5, 3/5))
+        sage: exact_value
+        2*log(3/5) - 2*log(2/5)
+        sage: RR(exact_value)
+        0.810930216216329
+        sage: balanced_polytope_integrate(summary,
+        ....:                             truncation_degree = 25,
+        ....:                             scalar_field = RBF).endpoints()
+        (0.810930216216328, 0.810930216216329)
     """
 
     if truncation_degree <= 0:
@@ -939,29 +946,29 @@ def errorbound_inverse_tail(coeff, rho, dim, scalar_field):
     of ``scalar_field``.
 
     
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: errorbound_inverse_tail(1, 1/3, 1, RBF)
-    (34, 8.99432546225716e-17)
+        sage: errorbound_inverse_tail(1, 1/3, 1, RBF)
+        (34, 8.99432546225716e-17)
+        sage: RR((1/3)^34 / (1 - 1/3))
+        8.99432546225715e-17
 
-    sage: RR((1/3)^34 / (1 - 1/3))
-    8.99432546225715e-17
+    In dimension 3, with a coefficient in front::
 
-    sage: degree, epsilon = errorbound_inverse_tail(7, 1/4, 3, RBF)
-    sage: (degree, epsilon)
-    (33, 1.09644964147099e-17)
+        sage: degree, epsilon = errorbound_inverse_tail(7, 1/4, 3, RBF)
+        sage: (degree, epsilon)
+        (33, 1.09644964147099e-17)
+        sage: 7 * epsilon < 2^(-RBF.precision())
+        True
 
-    sage: S.<u, v, w> = PowerSeriesRing(QQ)
-    sage: series = ((1+u)*(1+v)*(1+w) + O(u, v, w)^33).inverse()
-    sage: approximant = series.polynomial()
-    sage: exact_error = (4/3)^3 - approximant(-1/4, -1/4, -1/4)
-             # The error is attained at u, v, w minimal
-    sage: RR(exact_error)
-    1.09644964147099e-17
+    and the bound is compared with the error actually committed, which
+    for this fraction is attained at ``u``, ``v``, ``w`` minimal::
 
-    sage: 7 * epsilon < 2^(-RBF.precision())
-    True
-
+        sage: S.<u, v, w> = PowerSeriesRing(QQ)
+        sage: series = ((1+u)*(1+v)*(1+w) + O(u, v, w)^33).inverse()
+        sage: approximant = series.polynomial()
+        sage: RR((4/3)^3 - approximant(-1/4, -1/4, -1/4))
+        1.09644964147099e-17
     """
     if dim <= 0:
         raise ValueError("The dimension should be a positive integer.")
@@ -1004,21 +1011,29 @@ def is_polytope_on_sum1(polytope):
     dimensional.
 
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: is_polytope_on_sum1(polytopes.hypercube(4))
-    False
+        sage: is_polytope_on_sum1(polytopes.hypercube(4))
+        False
+        sage: is_polytope_on_sum1(polytopes.simplex(4))
+        True
 
-    sage: is_polytope_on_sum1(polytopes.simplex(4))
-    True
+    Any other polytope cut out by an equation is rejected::
 
-    sage: is_polytope_on_sum1(polytope_line)
-    ValueError                                Traceback (most recent call last)
-    ...
-    ValueError: This method is currently handling only polytopes which are
-    either full-dimensional, or cut out by the specific equation
-    `\sum_i x_i = 1`.
+        sage: polytope_line = Polyhedron(eqns = [(-1, 1, 0, 0), (0, 0, 1, -1)])
+        sage: is_polytope_on_sum1(polytope_line)
+        Traceback (most recent call last):
+        ...
+        ValueError: This method is currently handling only polytopes which are
+        either full-dimensional, or cut out by the specific equation
+        `\sum_i x_i = 1`.
 
+    as is anything which is not a polytope at all::
+
+        sage: is_polytope_on_sum1([1, 2])
+        Traceback (most recent call last):
+        ...
+        TypeError: The polytope should be a Polyhedron object.
     """
 
     if not isinstance(polytope, Polyhedron_base):
@@ -1054,17 +1069,27 @@ def check_positive_orthant(polytope):
 
     OUTPUT: ``None``; an exception is raised if the condition fails.
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: check_positive_orthant(Polyhedron([(1, 1), (2, 3)]))
+        sage: check_positive_orthant(Polyhedron([(1, 1), (2, 3)]))
 
-    sage: check_positive_orthant(polytopes.simplex(2))
-    ValueError                                Traceback (most recent call last)
-    ...
-    ValueError: The polytope must lie in the open positive orthant, which
-    is a hypothesis of the method, but its coordinate number 0 goes down
-    to 0.
+    A polytope touching a coordinate hyperplane is rejected::
 
+        sage: check_positive_orthant(polytopes.simplex(2))
+        Traceback (most recent call last):
+        ...
+        ValueError: The polytope must lie in the open positive orthant, which
+        is a hypothesis of the method, but its coordinate number 0 goes down
+        to 0.
+
+    as is one extending to negative coordinates::
+
+        sage: check_positive_orthant(polytopes.hypercube(3))
+        Traceback (most recent call last):
+        ...
+        ValueError: The polytope must lie in the open positive orthant, which
+        is a hypothesis of the method, but its coordinate number 0 goes down
+        to -1.
     """
 
     mini = polytope.bounding_box()[0]
@@ -1097,47 +1122,42 @@ def balance_polytope(polytope, facteur, verbose = 0):
 
     EXAMPLES:
 
-    sage: polytope = polytopes.hypercube(3) + vector((4, 4, 4))
-    sage: balanced_polytopes = balance_polytope(polytope, 1.3)
-    sage: balanced_polytopes
-    [Polytope summary data with ... volume 729/1000,
-     Polytope summary data with ... volume 891/1000,
-     Polytope summary data with ... volume 891/1000,
-     Polytope summary data with ... volume 1089/1000,
-     Polytope summary data with ... volume 891/1000,
-     Polytope summary data with ... volume 1089/1000,
-     Polytope summary data with ... volume 1089/1000,
-     Polytope summary data with ... volume 1331/1000]
+    The pieces partition the polytope, so their volumes add up to its
+    own::
 
-    sage: add(Q.volume() for Q in balanced_polytopes)
-    8
+        sage: # optional - latte_int
+        sage: polytope = polytopes.hypercube(3) + vector((4, 4, 4))
+        sage: balanced_polytopes = balance_polytope(polytope, 1.3)
+        sage: len(balanced_polytopes)
+        8
+        sage: sorted(Q.volume() for Q in balanced_polytopes)
+        [729/1000, 891/1000, 891/1000, 891/1000,
+         1089/1000, 1089/1000, 1089/1000, 1331/1000]
+        sage: add(Q.volume() for Q in balanced_polytopes)
+        8
 
-    sage: polytope = vector((1/10,) * 4) + 6/10 * polytopes.simplex(3)
-    sage: polytope.vertices()
-    (A vertex at (1/10, 1/10, 1/10, 7/10),
-     A vertex at (1/10, 1/10, 7/10, 1/10),
-     A vertex at (1/10, 7/10, 1/10, 1/10),
-     A vertex at (7/10, 1/10, 1/10, 1/10))
-    sage: balanced_polytopes = balance_polytope(polytope, 1.5)
+    The same holds on the hyperplane `\sum_i x_i = 1`, with the volume
+    induced there::
 
-    sage: balanced_polytopes
-    [Polytope summary data with 6 inequalities, cut out by the equation
-      (-1, 1, ..., 1), and volume 1/1000,
-    ...
-     Polytope summary data with 4 inequalities, cut out by the equation
-      (-1, 1, ..., 1), and volume 1/6000]
-
-    sage: add(Q.volume() for Q in balanced_polytopes)
-    9/250
-
-    sage: polytope.volume(measure='induced_rational')
-    9/250
+        sage: # optional - latte_int
+        sage: polytope = vector((1/10,) * 4) + 6/10 * polytopes.simplex(3)
+        sage: polytope.vertices()
+        (A vertex at (1/10, 1/10, 1/10, 7/10),
+         A vertex at (1/10, 1/10, 7/10, 1/10),
+         A vertex at (1/10, 7/10, 1/10, 1/10),
+         A vertex at (7/10, 1/10, 1/10, 1/10))
+        sage: balanced_polytopes = balance_polytope(polytope, 1.5)
+        sage: add(Q.volume() for Q in balanced_polytopes)
+        9/250
+        sage: polytope.volume(measure='induced_rational')
+        9/250
 
     The grid lines have to cover the bounding box, or a sliver of the
     polytope is dropped. Here the ratio ``285605/100000`` lies just above
     the fourth power of ``1.3`` rounded to three decimals, and below the
     exact power::
 
+        sage: # optional - latte_int
         sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (285605/100000, -1, 0),
         ....:                               (-1, 0, 1), (6/5, 0, -1)])
         sage: pieces = balance_polytope(polytope, 1.3)
@@ -1313,36 +1333,51 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
 
     EXAMPLES:
 
-    sage: polytope = Polyhedron([(1,), (2,)])
-    sage: sieve_integral(polytope)
-    [0.69315 +/- 4.37e-6]
+    In dimension one the integral is a logarithm::
 
-    sage: polytope = (vector((2, 2, 2))
-    ....:             + polytopes.hypercube(3, intervals='zero_one'))
-    sage: polytope.bounding_box()
-    ((2, 2, 2), (3, 3, 3))
+        sage: sieve_integral(Polyhedron([(1,), (2,)]))
+        [0.69315 +/- 4.37e-6]
 
-    sage: sieve_integral(polytope)
-    [0.06666 +/- 6.17e-6]
+    On a cube, it is a product of logarithms::
 
-    sage: RR(log(3/2)^3)
-    0.0666592560084858
+        sage: # optional - latte_int
+        sage: polytope = (vector((2, 2, 2))
+        ....:             + polytopes.hypercube(3, intervals='zero_one'))
+        sage: polytope.bounding_box()
+        ((2, 2, 2), (3, 3, 3))
+        sage: sieve_integral(polytope)
+        [0.06666 +/- 6.17e-6]
+        sage: RR(log(3/2)^3)
+        0.0666592560084858
 
-    sage: polytope = Polyhedron(eqns = [(-1, 1, 1, 1)],
-    ....:                       ieqs = [(-1/7, 1, 0, 0),
-    ....:                               (0, -1, 1, 0),
-    ....:                               (0, 0, -1, 1)])
-    sage: sieve_integral(polytope)
-    [0.9569 +/- 3.06e-5]
+    On a polytope cut out by `\sum_i x_i = 1`, and raising the
+    precision::
 
-    sage: sieve_integral(polytope, precision = 50)
-    [0.9569135271017 +/- 5.30e-14]
+        sage: # optional - latte_int
+        sage: polytope = Polyhedron(eqns = [(-1, 1, 1, 1)],
+        ....:                       ieqs = [(-1/7, 1, 0, 0),
+        ....:                               (0, -1, 1, 0),
+        ....:                               (0, 0, -1, 1)])
+        sage: sieve_integral(polytope)
+        [0.9569 +/- 3.06e-5]
+        sage: sieve_integral(polytope, precision = 50)
+        [0.9569135271017 +/- 5.30e-14]
+        sage: x = var("x")
+        sage: RR(1/2 * integrate(log(6 - x)/x, (x, 1, 5)))
+        0.956913527101737
 
-    sage: RR(1/2 * integrate(log(6 - x)/x, (x, 1, 5)))
-    0.956913527101737
+    The polytope may also be given as symbolic inequalities::
+
+        sage: # optional - latte_int
+        sage: u, v = var("u, v")
+        sage: sieve_integral([u + v == 1, 1/4 < u, u < v])
+        [1.09861 +/- 6.61e-6]
+        sage: RR(log(3))
+        1.09861228866811
 
     We check for possible rounding errors in the slicing::
 
+        sage: # optional - latte_int
         sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (285605/100000, -1, 0),
         ....:                               (-1, 0, 1), (6/5, 0, -1)])
         sage: R = RealBallField(100)
@@ -1423,22 +1458,23 @@ def polynomial_trivial_bound(polynomial, maxi):
 
     - a RealField element with upper-rounding.
 
-    EXAMPLE:
+    EXAMPLES::
 
-    sage: K = PolynomialRing(RBF, "x")
-    sage: polynomial = K(chebyshev_T(3, x))
-    sage: polynomial
-    4.000000000000000*x^3 - 3.000000000000000*x
+        sage: K.<x> = PolynomialRing(RBF)
+        sage: polynomial = K(chebyshev_T(3, x))
+        sage: polynomial
+        4.000000000000000*x^3 - 3.000000000000000*x
+        sage: polynomial_trivial_bound(polynomial, (1,))
+        7.00000000000000
 
-    sage: polynomial_trivial_bound(polynomial, (1,))
-    7.00000000000000
+    In several variables::
 
-    sage: expansion = taylor(1/(1 + x + y + z),
-    ....:                    (x, 0), (y, 0), (z, 0), 10)
-    sage: polynomial = expansion.polynomial(RBF)
-    sage: polynomial_trivial_bound(polynomial, (1/4, 1/4, 1/4))
-    3.83105945587159
-
+        sage: x, y, z = var("x, y, z")
+        sage: expansion = taylor(1/(1 + x + y + z),
+        ....:                    (x, 0), (y, 0), (z, 0), 10)
+        sage: polynomial = expansion.polynomial(RBF)
+        sage: polynomial_trivial_bound(polynomial, (1/4, 1/4, 1/4))
+        3.83105945587159
     """
 
     coeffs = polynomial.monomial_coefficients()
@@ -1493,23 +1529,30 @@ def sieve_integral_harman(polytope_data,
 
     OUTPUT: a RealBall containing the value of the integral.
 
-    EXAMPLES:
-    sage: polytope = {x + y == 1, 1/4 < x, x < y}
-    sage: polynomial = 1 + x
-    sage: sieve_integral_harman(polytope, (y, x), polynomial)
-    [1.6921 +/- 3.04e-5]
+    EXAMPLES::
 
-    sage: A = integrate((1+x) / (x*(1-x)), (x, 1/3, 1/2))
-    sage: B = integrate((1+log(1/x-2)) * (1+x) / (x*(1-x)), (x, 1/4, 1/3))
-    sage: RR(A + B)
-    1.69211856327702
+        sage: # optional - latte_int
+        sage: x, y = var("x, y")
+        sage: polytope = [x + y == 1, 1/4 < x, x < y]
+        sage: polynomial = 1 + x
+        sage: sieve_integral_harman(polytope, (y, x), polynomial)
+        [1.6921 +/- 3.04e-5]
 
-    sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
-    [1.6921185632770 +/- 3.09e-14]
+    which is checked against the value obtained by splitting the integral
+    where the Buchstab function changes branch::
+
+        sage: # optional - latte_int
+        sage: A = integrate((1+x) / (x*(1-x)), (x, 1/3, 1/2))
+        sage: B = integrate((1+log(1/x-2)) * (1+x) / (x*(1-x)), (x, 1/4, 1/3))
+        sage: RR(A + B)
+        1.69211856327702
+        sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
+        [1.6921185632770 +/- 3.09e-14]
 
     The polytope may also be a Polyhedron object, the Buchstab variables
     a pair of indices, and the integrand a polynomial::
 
+        sage: # optional - latte_int
         sage: P = Polyhedron(eqns = [(-1, 1, 1)],
         ....:                ieqs = [(-1/4, 1, 0), (0, -1, 1)])
         sage: R = PolynomialRing(QQ, "x", 2)
@@ -1520,6 +1563,7 @@ def sieve_integral_harman(polytope_data,
     factor. On `[1, 2]^2` with `F = 1 + x_1` the integral is
     `(1 + \log 2) \log 2`::
 
+        sage: # optional - latte_int
         sage: box = Polyhedron(ieqs = [(-1, 1, 0), (2, -1, 0),
         ....:                          (-1, 0, 1), (2, 0, -1)])
         sage: value = sieve_integral_harman(box, None, 1 + R.gen(0)); value
@@ -1530,6 +1574,7 @@ def sieve_integral_harman(polytope_data,
 
     and without an integrand it is what :func:`sieve_integral` computes::
 
+        sage: # optional - latte_int
         sage: polytope = Polyhedron(eqns = [(-1, 1, 1, 1)],
         ....:                       ieqs = [(-1/7, 1, 0, 0),
         ....:                               (0, -1, 1, 0),
@@ -1540,6 +1585,7 @@ def sieve_integral_harman(polytope_data,
     As for :func:`sieve_integral`, the polytope has to lie in the open
     positive orthant::
 
+        sage: x, y = var("x, y")
         sage: sieve_integral_harman([x + y == 1, 0 < x, x < y], (y, x))
         Traceback (most recent call last):
         ...
