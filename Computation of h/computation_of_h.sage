@@ -13,11 +13,11 @@ or, from a Sage session started here::
     sage: load("computation_of_h.sage")
     sage: h_bar(0.4, 0.6, 1, precision=(50, 14), verbose=True)
 
-Loading this file defines the functions, loads
-``../code/number_theoretic_dde_solutions.py`` and ``IncreasingBooleanFunctions.py``
-(the latter reads ``data/`` at load time, as it does in the notebook), and
-reads ``list_infos_ab.npz``, which is what ``whichF`` needs. Nothing else
-runs.
+Loading this file defines the functions, loads ``../code/sieve_integral.py``
+and its companion ``number_theoretic_dde_solutions.py``, loads
+``IncreasingBooleanFunctions.py`` (which reads ``data/`` at load time, as it
+does in the notebook), and reads ``list_infos_ab.npz``, which is what
+``whichF`` needs. Nothing else runs.
 
 The three worked values of the notebook are registered in ``H_EXAMPLES``,
 in the style of ``Examples/run_examples.sage``; running the file directly
@@ -35,7 +35,17 @@ in these places, and nowhere else:
 - the three worked values (cells 35-37) become the callables of
   ``H_EXAMPLES``, computed when the file is run directly;
 - empty cells are left out, and a ``# --- cell N ---`` marker names the
-  cell each block comes from.
+  cell each block comes from;
+- four helpers of the notebook -- ``are_inequalities_compatible``,
+  ``Poly_fulldim``, ``Calcul_integrale`` and ``estimate``, cells 17, 18, 22
+  and 25 -- are now taken from the library's ``are_inequalities_compatible``,
+  ``polytope_if_dim``, ``latte_integrate`` and ``errorbound_inverse_tail``.
+
+What is *not* shared is the integration itself: ``erreur_absolue`` and
+``calcule_I_polyedre_equilibre`` stay here, because the integrand of h is a
+product of interval-wise polynomials composed with affine forms, which
+``sieve_integral`` cannot express -- it takes one polynomial composed with a
+coordinate ratio, times a plain polynomial.
 """
 
 # --- cell 0 ---------------------------------------------------------------
@@ -51,6 +61,10 @@ import numpy as np
 # --- cell 1 ---------------------------------------------------------------
 
 load("../code/number_theoretic_dde_solutions.py")
+
+# We specify the path so that sieve_integral.py finds the DDE module.
+load_attach_path("../code")
+load("sieve_integral.py")
 
 # --- cell 2 ---------------------------------------------------------------
 
@@ -319,31 +333,6 @@ def domaine(a, b, w, k, F_index, rh=None, om=None, prime=False):
     
     return(ieqs)
 
-# --- cell 17 --------------------------------------------------------------
-
-from sage.numerical.mip import MIPSolverException, MixedIntegerLinearProgram
-
-def are_inequalities_compatible(ieqs, dim):
-    p = MixedIntegerLinearProgram()
-    x = p.new_variable(real = True)
-    for ieq in ieqs:
-        p.add_constraint(ieq[0] + sum([x[j] * ieq[j] for j in range(1, dim+1)]) >= 0)
-    p.set_objective(None)
-    try:
-        v = p.solve(objective_only = True)
-        return True
-    except MIPSolverException:
-        return False
-
-# --- cell 18 --------------------------------------------------------------
-
-def Poly_fulldim(ieqs, dim):
-    if are_inequalities_compatible(ieqs, dim):
-        P = Polyhedron(ieqs = ieqs)
-        if P.dimension() == dim:
-            return P
-    return None
-
 # --- cell 20 --------------------------------------------------------------
 
 def erreur_absolue(polynome):
@@ -357,14 +346,6 @@ def erreur_absolue(polynome):
     P = K(add([cf[d].mid() * t^d for d in cf]))
     erreur_abs = add([cf[d].rad() for d in cf])
     return (P, erreur_abs)
-
-# --- cell 22 --------------------------------------------------------------
-
-def Calcul_integrale(polynomial, polytope):
-    """ Calcule l'intégrale du polynôme "polynomial" sur le polytope "polytope"
-    """
-    poly = polynomial.change_ring(QQ)
-    return polytope.integrate(poly, algorithm='cone-decompose')
 
 # --- cell 23 --------------------------------------------------------------
 
@@ -436,20 +417,9 @@ def calcule_I_polyedre_equilibre(QT, prime=False, verbose=False):
     dmax = d
     
     polynome_latte = add([homog[d] for d in homog if d<= dmax])
-    valeur = Calcul_integrale(polynome_latte, P1) * facteur_dilat / mul(centers)
+    valeur = latte_integrate(P1, polynome_latte) * facteur_dilat / mul(centers)
     printifdbg(f"  I ≃ {RR(valeur)}, queue ≤ {RR(estimation_queue)} (degré {dmax})")
     return [valeur, estimation_queue]
-
-# --- cell 25 --------------------------------------------------------------
-
-def estimate(r, d, K):
-    def f(N):
-        a = r/(1-r)
-        return r^(N-1) * add([a^(d-j) * binomial(N+d-1, j) for j in range(d)])
-    N = 0
-    while f(N) > 2^(-K.precision()):
-        N += 1
-    return (N, K(f(N)).upper())
 
 # --- cell 27 --------------------------------------------------------------
 
@@ -458,7 +428,7 @@ def equilibrage_polyedre(P, K, verbose=False):
     k = P.dimension()
     facteur = QQ(1.3)
 
-    N, prod_Delta = estimate((facteur-1)/(facteur+1), k, K)
+    N, prod_Delta = errorbound_inverse_tail(1, (facteur-1)/(facteur+1), k, K)
     
     nombre_decoupes = []
     decoupe_base = []
@@ -487,7 +457,7 @@ def equilibrage_polyedre(P, K, verbose=False):
             printifdbg(f" salam calcul")
             res = []
             for ieqs in ieqs_list if not verbose else tqdm(ieqs_list):
-                R = Poly_fulldim(ieqs, k)
+                R = polytope_if_dim(ieqs, k, False)
                 if R is not None:
                     T0, T1 = R.bounding_box()
                     vol = R.volume(engine='latte', algorithm='cone-decompose')
@@ -498,7 +468,7 @@ def equilibrage_polyedre(P, K, verbose=False):
         for ieqs in ieqs_list if not verbose else tqdm(ieqs_list):
             for j in range(nombre_decoupes[dim_decoupe]):
                 ieqsR = ieqs + planches[dim_decoupe][j]
-                if are_inequalities_compatible(ieqsR, k):
+                if are_inequalities_compatible(ieqsR):
                     res.append(ieqsR)
         return salami(res, dim_decoupe+1)
     Qlist = salami([ieqsP], 0)
@@ -510,7 +480,7 @@ def equilibrage_polyedre(P, K, verbose=False):
         for j in range(k):
             pl = planches[j][u[j]]
             ieqs = ieqs + pl
-        Q = Poly_fulldim(ieqsP + ieqs, k)
+        Q = polytope_if_dim(ieqsP + ieqs, k, False)
         if Q != None:
             T0, T1 = Q.bounding_box()
             vol = Q.volume(engine='latte', algorithm='cone-decompose')
@@ -587,7 +557,7 @@ def h_bar2(a, b, w, verbose=False, precision=20, kborne=8):
                 rh_el = (rh[0], rh[1], rh_poly, majorant_rh)
                 if F_p1:
                     # intégrale sur Delta'
-                    P1 = Poly_fulldim(domaine(a, b, w, k, F_index, rh=rh, prime=True), k)
+                    P1 = polytope_if_dim(domaine(a, b, w, k, F_index, rh=rh, prime=True), k, False)
                     if P1 is not None:
                         mini, maxi = P1.bounding_box()
                         majorant_produit_P1 = 1/mul(mini)
@@ -611,7 +581,7 @@ def h_bar2(a, b, w, verbose=False, precision=20, kborne=8):
                         res += res_new
                 if F_p0:
                     for om in Om_list:
-                        P1 = Poly_fulldim(domaine(a, b, w, k, F_index, rh=rh, om=om), k+1)
+                        P1 = polytope_if_dim(domaine(a, b, w, k, F_index, rh=rh, om=om), k+1, False)
                         if P1 == None:
                             continue
                         mini, maxi = P1.bounding_box()

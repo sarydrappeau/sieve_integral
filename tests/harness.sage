@@ -17,9 +17,9 @@ runs in the globals of whoever loads it. Three consequences shape this file.
   ``__main__``. Loading the library into a namespace of its own makes every
   example of more than twenty pieces fail with ``PicklingError``.
 - ``Computation of h/computation_of_h.sage`` is loaded into a namespace of its
-  own instead, because it would otherwise overwrite the library: both define
-  ``are_inequalities_compatible``, with different arguments. Nothing the three
-  h anchors reach uses the pool, so the isolation costs nothing there.
+  own instead, so that the hundred-odd names it defines stay out of the way of
+  the example scripts. Nothing the three h anchors reach uses the pool, so the
+  isolation costs nothing there.
 - Values are computed through ``example_value``, which caches them, so that
   several tests can look at the same example without paying for it twice.
 
