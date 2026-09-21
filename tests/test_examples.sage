@@ -139,10 +139,10 @@ def closed_form_grid_rounding():
     """
     A two-dimensional box whose integral is log(285605/100000) * log(6/5).
 
-    ``balance_polytope`` builds its grid from ``QQ(round(facteur**i, 3))`` and
-    the number of cuts from ``RR`` logarithms, so the top grid line can fall
-    below the bounding box and a sliver of the polytope is dropped. Step 7
-    fixes it; until then the returned ball does not contain the true value.
+    The ratio 285605/100000 lies just above the fourth power of 1.3 rounded to
+    three decimals, and below the exact power, so the grid of
+    ``balance_polytope`` has to reach it: otherwise a sliver of the polytope is
+    dropped and the returned ball misses the true value.
     """
     library = library_namespace()
     polytope = Polyhedron(ieqs=[(-1, 1, 0), (QQ(285605/100000), -1, 0),
@@ -205,9 +205,6 @@ TESTS.update({
 
 
 KNOWN_ISSUES = {
-    "closedform/grid-rounding":
-        "balance_polytope rounds its grid, dropping a sliver of the polytope "
-        "(step 7)",
     "bound/stadlmann/02":
         "GLPK wrongly rejects feasible cells, so the value is too small "
         "(step 9); and the corrected value, about 0.1221, still exceeds the "

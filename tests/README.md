@@ -104,5 +104,4 @@ Two things constrain how tests are written:
   particular the symbolic variables `t`, `u`, `v`, `w`, `z`, `x1` … `a7`, the
   Stadlmann script's dict `a`, or their `test_*` functions;
 - `Computation of h/computation_of_h.sage` is loaded into a namespace of its
-  own, since it would otherwise overwrite the library's
-  `are_inequalities_compatible` with its own.
+  own, to keep the names it defines out of the way of the example scripts.
