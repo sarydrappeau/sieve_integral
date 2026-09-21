@@ -122,9 +122,8 @@ against 7.39s, a ratio of 0.98.
   library's, and cannot be until `sieve_integral` can express a product of
   interval-wise polynomials composed with affine forms -- the entry `TODO.md`
   now carries.
-* `stadlmann/02` and `stadlmann/58` stay in `KNOWN_ISSUES`: the first is the
-  floating-point LP above, the second a value above the bound recorded from the
-  paper.
+* `stadlmann/02` is still the floating-point LP above, which step 9 decides
+  exactly.
 
 ## Traps worth remembering
 
