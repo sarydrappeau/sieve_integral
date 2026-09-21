@@ -58,6 +58,13 @@ See the README.md file for more information about those.
 - Install Sage following the instructions described here : [Sage Installation Guide](https://doc.sagemath.org/html/en/installation/index.html).
 - Install ``LattE`` : [latte-integrale from conda-forge](https://anaconda.org/channels/conda-forge/packages/latte-integrale/overview)
 
+Alternatively, ``environment.yml`` describes these dependencies at the tested versions, for conda
+(conda-forge builds LattE for Linux and Intel macOS only):
+```
+conda env create -f environment.yml
+conda activate sieve-integral
+```
+
 ### Executing program
 
 - Download and place both scripts ``number_theoretic_dde_solutions.py`` and ``sieve_integral.py`` in the same directory.

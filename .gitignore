@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Sage: the preparsed script it leaves next to a .sage file, and saved sessions
+*.sage.py
+*.sobj
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Scratch files that LattE, run directly rather than through Sage, writes into
+# the working directory and does not remove:
+# - its emptiness check, which calls cdd
+Check_emp.lp
+Check_emp.lps
+Check_emp.out
+# - count
+latte_stats
+numOfLatticePoints
+numOfUnimodularCones
+totalTime
+# - the triangulation of cones by cdd (--triangulation=cdd)
+tri.ine
+tri.ext
+tri.ead
+tri.ecd
+tri.iad
+tri.icd
