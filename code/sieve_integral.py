@@ -1,10 +1,98 @@
+r"""Sieve integrals over rational convex polytopes, computed with LattE
+
+The sieve integral of a polytope `P` of the positive orthant is
+
+.. MATH::
+
+    I(P) = \int_P \frac{dt_1 \dotsb dt_k}{t_1 \dotsb t_k},
+
+computed by :func:`sieve_integral`, and by :func:`sieve_integral_harman` when
+the integrand carries in addition a factor `B(t_r/t_s) F(t)`, with
+`B(u) = u \omega(u)` the Buchstab function and `F` a polynomial. The polytope
+is either full-dimensional or cut out by the equation `\sum_i x_i = 1`, in
+which case the integral is with respect to `dx_1 \dotsb dx_{d-1}`.
+
+Every value is returned as a ``RealBall`` which encloses the true value:
+truncation and rounding errors are accumulated into its radius.
+
+EXAMPLES:
+
+On the hyperplane `x_1 + x_2 + x_3 = 1`::
+
+    sage: # optional - latte_int
+    sage: nu = QQ(0.16623)
+    sage: x1, x2, x3 = var("x1, x2, x3")
+    sage: P = [nu < x1, x1 < x2, x2 < x3, x3 < 1/2, x1 + x2 + x3 == 1]
+    sage: sieve_integral(P, precision = 30)
+    [0.42193718 +/- 9.43e-9]
+
+Eliminating `x_3` and integrating in `x_2` leaves one integral, which Sage
+integrates numerically to the same value::
+
+    sage: # optional - latte_int
+    sage: lower = lambda t: max(t, 1/2 - t)
+    sage: numerical_integral(
+    ....:     lambda t: -log(lower(t)/(1 - t - lower(t)))/(t*(1 - t)),
+    ....:     nu, 1/3)[0]
+    0.42193...
+
+With the Buchstab factor `B(u/v)` and the polynomial `u + v`::
+
+    sage: # optional - latte_int
+    sage: u, v = var("u, v")
+    sage: Q = [17/16 < u + v, u + v < 8/7, (2 - u - v)/3 < v, v < (u + v)/2]
+    sage: sieve_integral_harman(Q, (u, v), u + v, precision = 30)
+    [0.08606199 +/- 5.24e-9]
+
+On that polytope the ratio `u/v` stays below 3, where `B` is
+elementary.  Writing `a = u + v` and `w = v`, and splitting the inner
+integral where the ratio crosses 2, numerical integration alone gives
+the same value::
+
+    sage: B = lambda t: 1 if t <= 2 else 1 + log(t - 1)
+    sage: f = lambda a, w: B(a/w - 1) * a/((a - w)*w)
+    sage: inner = lambda a: (
+    ....:     numerical_integral(lambda w: f(a, w), (2 - a)/3, a/3)[0]
+    ....:     + numerical_integral(lambda w: f(a, w), a/3, a/2)[0])
+    sage: numerical_integral(inner, 17/16, 8/7)[0]
+    0.086061989226...
+
+AUTHORS:
+
+- Sary Drappeau, Adrien Mounier
+
+AI DISCLOSURE:
+
+Claude Opus 5 corrected several of the error bounds, cleaned up the code and
+wrote its doctests.
+
+"""
+# ****************************************************************************
+#  Distributed under the terms of the GNU General Public License (GPL)
+#
+#    This code is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#    General Public License for more details.
+#
+#  The full text of the GPL is available at:
+#
+#                  https://www.gnu.org/licenses/
+# ****************************************************************************
+
+import os
 from functools import partial
 from multiprocessing import Pool as pool
 from operator import le, ge, lt, gt, eq
+# Sage as a whole first: in a bare Python process, importing one of its
+# submodules before this trips a circular import inside Sage itself.
+import sage.all  # noqa: F401
+from sage.structure.sage_object import SageObject
 from sage.rings.real_arb import RealBallField
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
 from sage.functions.other import floor, binomial
+from sage.misc.functional import round
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
 from sage.matrix.special import diagonal_matrix
@@ -16,9 +104,21 @@ from sage.geometry.polyhedron.constructor import Polyhedron
 from sage.geometry.polyhedron.base import Polyhedron_base
 from sage.symbolic.expression import Expression
 from tqdm import tqdm
-import os
 
-load("number_theoretic_dde_solutions.py")
+try:
+    from number_theoretic_dde_solutions import BuchstabB
+except ImportError as exc:
+    # This file is being loaded rather than imported. Sage's load resolves
+    # the companion against the current directory and load_attach_path().
+    try:
+        load("number_theoretic_dde_solutions.py")
+    except (NameError, IOError, OSError):
+        raise ImportError(
+            "number_theoretic_dde_solutions was not found, neither on "
+            "sys.path nor in the current directory. Run from the "
+            "directory which holds it, or name that directory, as in "
+            'load_attach_path("../code").'
+        ) from exc
 
 # How many worker processes the pieces of a balanced polytope are mapped
 # over, unless a ``processes`` argument says otherwise. Set it to 1 if you
