@@ -342,31 +342,40 @@ def absolute_error(polynomial):
     ``RealBallField``.
 
     OUTPUT: a tuple ``(polynomial_mid, error)``, where
-    
-    - ``polynomial_mid`` is a polynomial over a ``RealField``
-    (same precision) whose coefficients are the midpoints of those
-    of ``polynomial``,
+
+    - ``polynomial_mid`` is a polynomial over ``QQ`` whose coefficients
+    are exactly the midpoints of those of ``polynomial``,
     - ``error`` is the sum of the radii of the coefficients
     of ``polynomial``.
 
-    EXAMPLES:
+    EXAMPLES::
 
-    sage: K = RealBallField(30)
-    sage: KP.<t> = PolynomialRing(R)
-    sage: polynomial = sum(K(RR.random_element()) * t^j
-                           for j in range(5))
-    sage: x0 = random() * 2 - 1
-    sage: 
+        sage: K = RealBallField(30)
+        sage: KP.<t> = PolynomialRing(K)
+        sage: polynomial = K(1).add_error(1/1000) + K(1/2)*t + K(1/3)*t^2
+        sage: polynomial_mid, error = absolute_error(polynomial)
+        sage: polynomial_mid
+        357913941/1073741824*t^2 + 1/2*t + 1
+        sage: error
+        0.0010000005
 
+    The coefficients are the midpoints themselves, and not the simplest
+    rationals nearby: coercing a ``RealNumber`` into ``QQ`` would turn the
+    midpoint of ``K(1/3)`` into ``1/3``, which the sum of the radii does
+    not cover. The bound holds for `t \in [-1, 1]`::
 
-
+        sage: all(polynomial(K(t0)).overlaps(
+        ....:         K(polynomial_mid(t0)).add_error(error))
+        ....:     for t0 in (-1, -1/2, 0, 1/3, 1))
+        True
     """
     scalar_field = polynomial.base_ring()
     error_field = RealField(prec=scalar_field.precision(), rnd="RNDU")
     poly_ring = PolynomialRing(QQ, "t")
     poly_gen = poly_ring.gen()
     coeffs = polynomial.monomial_coefficients()
-    polynomial = poly_ring(sum(coeff.mid() * (poly_gen**degree)
+    polynomial = poly_ring(sum(coeff.mid().exact_rational()
+                               * (poly_gen**degree)
                                for degree, coeff in coeffs.items()))
     erreur_abs = sum(error_field(coeff.rad()) for coeff in coeffs.values())
     return (polynomial, erreur_abs)
@@ -1382,7 +1391,7 @@ def sieve_integral_harman(polytope_data,
     sage: polytope = {x + y == 1, 1/4 < x, x < y}
     sage: polynomial = 1 + x
     sage: sieve_integral_harman(polytope, (y, x), polynomial)
-    [1.6921 +/- 2.90e-5]
+    [1.6921 +/- 3.04e-5]
 
     sage: A = integrate((1+x) / (x*(1-x)), (x, 1/3, 1/2))
     sage: B = integrate((1+log(1/x-2)) * (1+x) / (x*(1-x)), (x, 1/4, 1/3))
@@ -1390,7 +1399,7 @@ def sieve_integral_harman(polytope_data,
     1.69211856327702
 
     sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
-    [1.6921185632770 +/- 3.03e-14]
+    [1.6921185632770 +/- 3.09e-14]
 
     """
 
@@ -1748,21 +1757,31 @@ def balanced_polytope_integrate_polyratio(
         poly1_arg = (
             (numer * inv_denom / centers[denom_idx] - midpt) * 2
         )
-        poly1_arg_max = maxi[numer_idx] / mini[denom_idx]
+        # The caller intersects the polytope with n < t_r/t_s < n+1 and
+        # passes midpt = n + 1/2, so poly1_arg lies in [-1, 1].
+        poly1_arg_max = 1
+        # inv_denom drops the tail of 1/(1 + x_s r_s) below degree N,
+        # which is at most r_s^N / (1 - r_s); carried through the factor
+        # numer / centers[s] <= maxi[r] / centers[s] and the outer factor
+        # 2, with centers[s] * (1 - r_s) = mini[s].
         poly1_arg_eps = (
-            ratios[denom_idx]**truncation_degree_denom * poly1_arg_max
+            2 * maxi[numer_idx]
+            * ratios[denom_idx]**truncation_degree_denom
+            / mini[denom_idx]
         )
         poly1_mc = poly1.monomial_coefficients()
         poly1_val_eps = (
             poly1_epsilon
-            + sum(coeff * ((poly1_arg_max + poly1_arg_eps)**d
-                           - poly1_arg_max**d)
+            + sum(abs(coeff) * ((poly1_arg_max + poly1_arg_eps)**d
+                                - poly1_arg_max**d)
                   for d, coeff in poly1_mc.items())
         )
         poly1_compose = poly1.subs(poly1_arg).polynomial()
     else:
         poly1_compose = 1
-        poly1_val_eps = scalar_field.zero()
+        # Upper-rounded, like poly1_epsilon and the majorants it is
+        # combined with below.
+        poly1_val_eps = scalar_field.zero().upper()
 
     if polynomial2 is None:
         poly2_compose = series_ring.one().polynomial()
@@ -1781,7 +1800,11 @@ def balanced_polytope_integrate_polyratio(
     ).homogeneous_components()
 
 
-    dmax = truncation_degree - 1
+    # The product exceeds the degree truncation_degree - 1 of the series,
+    # by the degrees of the two polynomials, so the loop has to start at
+    # the top degree present: everything above where it starts is
+    # discarded below without being accounted for anywhere.
+    dmax = max(homog) if homog else 0
     estimation_queue = scalar_field(
         vol * majorant_product * majorant_polynomial2 * poly1_val_eps
     ).upper()
