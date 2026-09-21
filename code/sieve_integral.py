@@ -147,9 +147,12 @@ def symbolic_to_eqns(expressions):
     - ``ieqs``: similarly, a list of inequalities, with
     `Ax + b \geq 0` represented by a list ``(b, A)``
 
-    - ``variables``: a list of symbolic variables, ordered in such a
-    way that the ``i``-th element of ``variables`` corresponds to the
+    - ``variables``: the list of symbolic variables sorted by name, so
+    that the ``i``-th element of ``variables`` corresponds to the
     ``i``-th coordinate in the equalities and inequalities.
+
+    The rows follow the order in which ``expressions`` is iterated: pass
+    a list rather than a set if that order matters to you.
 
     EXAMPLES:
 
@@ -157,11 +160,11 @@ def symbolic_to_eqns(expressions):
 
     sage: var("a, b, c")
 
-    sage: symbolic_to_eqns({2*a + b - c <= 0, a > c, b + a == 3*c})
-    ([(0, 1, -3, 1)], [(0, -2, 1, -1), (0, 1, -1, 0)], (a, c, b))
+    sage: symbolic_to_eqns([2*a + b - c <= 0, a > c, b + a == 3*c])
+    ([(0, 1, 1, -3)], [(0, -2, -1, 1), (0, 1, 0, -1)], [a, b, c])
 
-    sage: symbolic_to_eqns({a == 2*b, b == 2*a, a + b >= 0})
-    ([(0, 1, -2), (0, -2, 1)], [(0, 1, 1)], (a, b))
+    sage: symbolic_to_eqns([a == 2*b, b == 2*a, a + b >= 0])
+    ([(0, 1, -2), (0, -2, 1)], [(0, 1, 1)], [a, b])
 
     sage: symbolic_to_eqns({sqrt(2) * a >= b})
     TypeError                    Traceback (most recent call last)
@@ -187,7 +190,7 @@ def symbolic_to_eqns(expressions):
     for expr in expressions:
         for x in expr.variables():
             variables.add(x)
-    variables = list(variables)
+    variables = sorted(variables, key = str)
     for expression in expressions:
         if not isinstance(expression, Expression):
             raise ValueError
@@ -473,7 +476,12 @@ def latte_integrate(polytope, polynomial = None):
                                 ieqs = [(0, 1, 0), (0, -1, 1), (2, 0, -1)])
     sage: R.<t1, t2> = PolynomialRing(QQ, 2)
     sage: latte_integrate(polytope, t1 * t2)
-    0
+    NotImplementedError                       Traceback (most recent call last)
+    ...
+    NotImplementedError: The last coordinate cannot be eliminated: its
+    coefficient in the equation of the polytope is zero. Permute the order
+    of the variables, or use polytope.integrate(..., measure='induced')
+    instead.
     sage: polytope.integrate(t1 * t2, measure = 'induced')
     3/2
 
@@ -518,7 +526,12 @@ def latte_integrate(polytope, polynomial = None):
 
     eqn = polytope.equations_list()[0]
     if eqn[-1].is_zero():
-        return 0
+        raise NotImplementedError(
+            "The last coordinate cannot be eliminated: its coefficient "
+            "in the equation of the polytope is zero. Permute the order "
+            "of the variables, or use "
+            "polytope.integrate(..., measure='induced') instead."
+        )
 
     dim = polytope.ambient_dimension()
     if polynomial is None:
@@ -1026,6 +1039,39 @@ def is_polytope_on_sum1(polytope):
     )
 
 
+def check_positive_orthant(polytope):
+    r"""
+    Raise an exception unless the polytope lies in the open positive
+    orthant `{\mathbb R}_{>0}^k`. Positivity is a hypothesis of the
+    method.
+
+    INPUT: ``polytope`` (Polyhedron object) -- a non-empty polytope.
+
+    OUTPUT: ``None``; an exception is raised if the condition fails.
+
+    EXAMPLES:
+
+    sage: check_positive_orthant(Polyhedron([(1, 1), (2, 3)]))
+
+    sage: check_positive_orthant(polytopes.simplex(2))
+    ValueError                                Traceback (most recent call last)
+    ...
+    ValueError: The polytope must lie in the open positive orthant, which
+    is a hypothesis of the method, but its coordinate number 0 goes down
+    to 0.
+
+    """
+
+    mini = polytope.bounding_box()[0]
+    for j, lower_bound in enumerate(mini):
+        if lower_bound <= 0:
+            raise ValueError(
+                "The polytope must lie in the open positive orthant, "
+                "which is a hypothesis of the method, but its coordinate "
+                f"number {j} goes down to {lower_bound}."
+            )
+
+
 def balance_polytope(polytope, facteur, verbose = 0):
     r"""
     Partition a polytope into pieces where the coordinates vary within a
@@ -1261,6 +1307,17 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
         ....:     R(285605/100000).log() * R(6/5).log())
         True
 
+    The polytope has to lie in the open positive orthant, which the
+    balancing and the expansions assume::
+
+        sage: u, v = var("u, v")
+        sage: sieve_integral([u + v == 1, 0 < u, u < v])
+        Traceback (most recent call last):
+        ...
+        ValueError: The polytope must lie in the open positive orthant, which
+        is a hypothesis of the method, but its coordinate number 0 goes down
+        to 0.
+
     """
 
     if not isinstance(polytope_data, Polyhedron_base):
@@ -1273,6 +1330,7 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
     scalar_field = RealBallField(precision)
     if polytope.is_empty():
         return scalar_field.zero()
+    check_positive_orthant(polytope)
 
     border = is_polytope_on_sum1(polytope_data)
 
@@ -1375,10 +1433,15 @@ def sieve_integral_harman(polytope_data,
     equality and/or inequalities.
 
     - ``buchstab_variables`` -- a tuple of variables, or indices, describing
-    the argument of the Buchstab function in the integrand.
+    the argument of the Buchstab function in the integrand. If ``None``,
+    the integrand carries no Buchstab factor, and the computation reduces
+    to that of `F(x) / x_1 \dotsb x_d`.
 
     - ``integrand_polynomial_data`` -- either a symbolic expression in
-    variables which appear in ``polytope_data``, or a Polynomial.
+    variables which appear in ``polytope_data``, or a Polynomial. A
+    symbolic expression goes with a symbolic ``polytope_data``; with a
+    Polyhedron object, pass a polynomial in as many variables as the
+    ambient dimension.
 
     - ``precision`` (default: 20) -- the requested precision, in bits.
 
@@ -1401,6 +1464,46 @@ def sieve_integral_harman(polytope_data,
     sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
     [1.6921185632770 +/- 3.09e-14]
 
+    The polytope may also be a Polyhedron object, the Buchstab variables
+    a pair of indices, and the integrand a polynomial::
+
+        sage: P = Polyhedron(eqns = [(-1, 1, 1)],
+        ....:                ieqs = [(-1/4, 1, 0), (0, -1, 1)])
+        sage: R = PolynomialRing(QQ, "x", 2)
+        sage: sieve_integral_harman(P, (1, 0), 1 + R.gen(0))
+        [1.6921 +/- 3.04e-5]
+
+    With ``buchstab_variables = None`` the integrand carries no Buchstab
+    factor. On `[1, 2]^2` with `F = 1 + x_1` the integral is
+    `(1 + \log 2) \log 2`::
+
+        sage: box = Polyhedron(ieqs = [(-1, 1, 0), (2, -1, 0),
+        ....:                          (-1, 0, 1), (2, 0, -1)])
+        sage: value = sieve_integral_harman(box, None, 1 + R.gen(0)); value
+        [1.1736 +/- 2.36e-5]
+        sage: K = RealBallField(100)
+        sage: value.overlaps((1 + K(2).log()) * K(2).log())
+        True
+
+    and without an integrand it is what :func:`sieve_integral` computes::
+
+        sage: polytope = Polyhedron(eqns = [(-1, 1, 1, 1)],
+        ....:                       ieqs = [(-1/7, 1, 0, 0),
+        ....:                               (0, -1, 1, 0),
+        ....:                               (0, 0, -1, 1)])
+        sage: sieve_integral_harman(polytope, None)
+        [0.9569 +/- 3.06e-5]
+
+    As for :func:`sieve_integral`, the polytope has to lie in the open
+    positive orthant::
+
+        sage: sieve_integral_harman([x + y == 1, 0 < x, x < y], (y, x))
+        Traceback (most recent call last):
+        ...
+        ValueError: The polytope must lie in the open positive orthant, which
+        is a hypothesis of the method, but its coordinate number 0 goes down
+        to 0.
+
     """
 
     if not isinstance(polytope_data, Polyhedron_base):
@@ -1412,6 +1515,7 @@ def sieve_integral_harman(polytope_data,
     polytope = Polyhedron(polytope_data, base_ring = QQ)
     if polytope.is_empty():
         return RealBallField(precision=precision).zero()
+    check_positive_orthant(polytope)
     border = is_polytope_on_sum1(polytope)
     dim = polytope.ambient_dimension()
 
@@ -1436,19 +1540,25 @@ def sieve_integral_harman(polytope_data,
             buchstab_indices = (variables.index(bv_numerator),
                                 variables.index(bv_denominator))
         else:
-            buchstab_indices = (int(bv_numerator), int(bv_numerator))
+            buchstab_indices = (int(bv_numerator), int(bv_denominator))
 
     if integrand_polynomial_data is None:
         integrand_polynomial = None
     else:
-        poly_ring = PolynomialRing(QQ, "x", len(variables))
+        poly_ring = PolynomialRing(QQ, "x", dim)
         poly_gens = poly_ring.gens()
         if isinstance(integrand_polynomial_data, Expression):
+            if variables is None:
+                raise ValueError(
+                    "A symbolic integrand goes with a symbolic "
+                    "description of the polytope. With a Polyhedron "
+                    f"object, pass a polynomial in {dim} variables."
+                )
             try:
                 integrand_polynomial = poly_ring(
                     integrand_polynomial_data.subs(
                         {variables[j]: poly_gens[j]
-                         for j in range(len(variables))}
+                         for j in range(dim)}
                     )
                 )
             except TypeError as exc:
@@ -1471,15 +1581,24 @@ def sieve_integral_harman(polytope_data,
     # implement the border only.  Beware that if your polytope had to
     # complementary inequalities, Sage might merge them into an
     # equality, which would disappear here.
-    if polytope.is_empty():
-        return 0
     ieqs = polytope.inequalities_list()
-    dim = polytope.ambient_dimension()
     if border:
         eqns = [eqn_sum_one(dim)]
     else:
         eqns = None
 
+    if buchstab_indices is None:
+        # There is no ratio to slice along, and the integral is that of
+        # F(t) / t_1 ... t_d over the whole polytope.
+        return sieve_integral_polyratio(
+            Polyhedron(eqns = eqns, ieqs = ieqs),
+            None,
+            None,
+            None,
+            polynomial2 = integrand_polynomial,
+            verbose = verbose,
+            precision = precision
+        )
 
     # We load an approximation of the Buchstab B(u) = u ω(u) function
     # from a specific module.
@@ -1799,11 +1918,6 @@ def balanced_polytope_integrate_polyratio(
         * poly2_compose
     ).homogeneous_components()
 
-
-    # The product exceeds the degree truncation_degree - 1 of the series,
-    # by the degrees of the two polynomials, so the loop has to start at
-    # the top degree present: everything above where it starts is
-    # discarded below without being accounted for anywhere.
     dmax = max(homog) if homog else 0
     estimation_queue = scalar_field(
         vol * majorant_product * majorant_polynomial2 * poly1_val_eps
