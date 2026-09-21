@@ -109,6 +109,17 @@ def h_namespace():
     return _namespaces["h"]
 
 
+def dde_namespace():
+    """
+    The namespace of ``code/number_theoretic_dde_solutions.py``, loaded on its
+    own: the tests on the three solutions need nothing else.
+    """
+    if "dde" not in _namespaces:
+        _namespaces["dde"] = load_isolated(
+            CODE_DIR, "number_theoretic_dde_solutions.py")
+    return _namespaces["dde"]
+
+
 def library_namespace():
     """
     Where ``sieve_integral`` and friends live: the same globals as the example

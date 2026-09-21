@@ -80,16 +80,20 @@ def border_integrate_benchmark(dimension, precision):
     return benchmark
 
 
-def dde_benchmark(name, precision, argument=10, repeats=20):
+def dde_benchmark(name, precision, argument=10, repeats=20, alpha=None):
     """
     Build the solution and extend it to u = ``argument``, ``repeats`` times
     over: one construction takes a few milliseconds even at 200 bits, which is
     too close to the noise for a before-and-after comparison to mean anything.
+
+    ``alpha`` is for FriedlanderS, whose grid is the m + n*alpha and so is
+    denser: it is built to a smaller u, for a comparable time.
     """
     def benchmark():
         library = library_namespace()
         for _ in range(repeats):
-            solution = library[name](precision=precision)
+            solution = (library[name](precision=precision) if alpha is None
+                        else library[name](alpha, precision=precision))
             solution(argument)
         assert solution.approximants_list(), f"{name} has no approximants"
     return benchmark
@@ -110,3 +114,8 @@ for _name in ("BuchstabB", "DickmanRho"):
     for _precision in (50, 100, 200):
         TESTS[f"timing/dde/{_name}-prec{_precision}"] = (
             dde_benchmark(_name, _precision), ("timing",))
+
+for _precision in (50, 100, 200):
+    TESTS[f"timing/dde/FriedlanderS-prec{_precision}"] = (
+        dde_benchmark("FriedlanderS", _precision, argument=5, alpha=QQ(2)/5),
+        ("timing",))
