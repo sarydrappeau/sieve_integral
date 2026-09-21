@@ -4,7 +4,7 @@ from operator import le, ge, lt, gt, eq
 from sage.rings.real_arb import RealBallField
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
-from sage.functions.other import floor, ceil, binomial
+from sage.functions.other import floor, binomial
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
 from sage.matrix.special import diagonal_matrix
@@ -1073,6 +1073,17 @@ def balance_polytope(polytope, facteur, verbose = 0):
     sage: polytope.volume(measure='induced_rational')
     9/250
 
+    The grid lines have to cover the bounding box, or a sliver of the
+    polytope is dropped. Here the ratio ``285605/100000`` lies just above
+    the fourth power of ``1.3`` rounded to three decimals, and below the
+    exact power::
+
+        sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (285605/100000, -1, 0),
+        ....:                               (-1, 0, 1), (6/5, 0, -1)])
+        sage: pieces = balance_polytope(polytope, 1.3)
+        sage: add(Q.volume() for Q in pieces) == polytope.volume()
+        True
+
     """
     printifdbg = print if verbose > 0 else (lambda *x:None)
     dim = polytope.ambient_dimension()
@@ -1084,15 +1095,27 @@ def balance_polytope(polytope, facteur, verbose = 0):
         raise ValueError("The balancing parameter must be greater than 1.")
 
     def facteur_pow(i):
+        # Rounded to three decimals, to keep the grid coordinates
+        # small-denominator: GLPK and LattE both work on them.
         return QQ(round(facteur**i, 3))
-    # TODO à affiner
+
+    def number_of_cuts(low, high):
+        """
+        The smallest ``n >= 1`` with ``low * facteur_pow(n) >= high``.
+
+        The cells along one coordinate are the intervals
+        ``[low * facteur_pow(i), low * facteur_pow(i+1)]``, so they cover
+        ``[low, high]`` exactly when the last line reaches ``high``.
+        """
+        cuts = 1
+        while low * facteur_pow(cuts) < high:
+            cuts += 1
+        return cuts
 
     # First compute the number of cuts to be made in each dimensions.
-    nombre_decoupes = []
     mini, maxi = polytope.bounding_box()
-    nombre_decoupes = tuple(
-        ceil((maxi[j]/mini[j]).log() / facteur.log()) for j in range(dim)
-    )
+    nombre_decoupes = tuple(number_of_cuts(mini[j], maxi[j])
+                            for j in range(dim))
 
     printifdbg(f"Number of slices = {nombre_decoupes}")
 
@@ -1219,6 +1242,15 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3, verbose = 0):
 
     sage: RR(1/2 * integrate(log(6 - x)/x, (x, 1, 5)))
     0.956913527101737
+
+    We check for possible rounding errors in the slicing::
+
+        sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (285605/100000, -1, 0),
+        ....:                               (-1, 0, 1), (6/5, 0, -1)])
+        sage: R = RealBallField(100)
+        sage: sieve_integral(polytope, precision = 30).overlaps(
+        ....:     R(285605/100000).log() * R(6/5).log())
+        True
 
     """
 
