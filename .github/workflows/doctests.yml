@@ -43,7 +43,7 @@ jobs:
       - name: Versions
         run: |
           sage --version
-          conda list sage latte-integrale
+          conda list 'sage|latte'
 
       # sage -t runs a block marked "# optional - <feature>" only where it
       # detects the feature. environment.yml provides latte_int, so the
