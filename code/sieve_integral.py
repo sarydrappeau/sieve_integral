@@ -42,7 +42,7 @@ With the Buchstab factor `B(u/v)` and the polynomial `u + v`::
     sage: u, v = var("u, v")
     sage: Q = [17/16 < u + v, u + v < 8/7, (2 - u - v)/3 < v, v < (u + v)/2]
     sage: sieve_integral_harman(Q, (u, v), u + v, precision = 30)
-    [0.08606199 +/- 5.24e-9]
+    [0.08606199 +/- 6.43e-9]
 
 On that polytope the ratio `u/v` stays below 3, where `B` is
 elementary.  Writing `a = u + v` and `w = v`, and splitting the inner
@@ -91,14 +91,13 @@ from sage.structure.sage_object import SageObject
 from sage.rings.real_arb import RealBallField
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
-from sage.functions.other import floor, binomial
+from sage.functions.other import binomial
 from sage.misc.functional import round
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
 from sage.matrix.special import diagonal_matrix
 from sage.rings.power_series_ring import PowerSeriesRing
 from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
-from sage.rings.big_oh import O
 from sage.combinat.integer_vector import IntegerVectors
 from sage.misc.misc_c import prod
 from sage.geometry.polyhedron.constructor import Polyhedron
@@ -889,6 +888,47 @@ def inverse_expansion(ratios, degree):
     return ring({tuple(a): prod((-r)**e for r, e in zip(ratios, a))
                  for n in range(degree + 1)
                  for a in IntegerVectors(n, len(ratios))})
+
+
+def ratio_composition(polynomial, factor, ratio, degrees):
+    r"""
+    Return `\sum_k a_k \bigl(f z S_{M_k}(t)\bigr)^k`, where
+    `\sum_k a_k u^k` is ``polynomial``, `f` is ``factor``,
+    `S_M(t) = \sum_{j < M} (-r t)^j` is `1/(1 + r t)` truncated below
+    degree `M`, `r` is ``ratio``, and `M_k` is ``degrees[k]``.
+
+    In :func:`balanced_polytope_integrate_polyratio`, `z` stands for
+    `(x_r - m x_s)/Z` and `t` for the rescaled `x_s`, and `f z/(1 + r t)`
+    is the argument `2 (x_r/x_s - m)` of the Buchstab approximant.
+
+    INPUT:
+
+    - ``polynomial`` -- a univariate polynomial over ``QQ``.
+
+    - ``factor``, ``ratio`` -- rational numbers `f` and `r`.
+
+    - ``degrees`` -- a dictionary from the degrees `k \geq 1` of the
+    nonzero coefficients of ``polynomial`` to positive integers `M_k`.
+
+    OUTPUT: a polynomial in ``z`` over ``QQ[t]``.
+
+    EXAMPLES:
+
+    The term of degree 1 is `2 z (1 - t/2 + t^2/4)`, the term of degree 2
+    is `(2 z)^2`::
+
+        sage: K.<u> = QQ[]
+        sage: ratio_composition(1 + u + u^2, 2, 1/2, {1: 3, 2: 1})
+        4*z^2 + (1/2*t^2 - t + 2)*z + 1
+    """
+
+    t = PolynomialRing(QQ, "t").gen()
+    z = PolynomialRing(t.parent(), "z").gen()
+    composed = z.parent()(polynomial[0])
+    for k, M in degrees.items():
+        composed += (polynomial[k]
+                     * (factor * z * sum((-ratio * t)**j for j in range(M)))**k)
+    return composed
 
 
 def balanced_polytope_integrate(polytope_summary,
@@ -1688,7 +1728,7 @@ def sieve_integral_harman(polytope_data,
         sage: polytope = [x + y == 1, 1/4 < x, x < y]
         sage: polynomial = 1 + x
         sage: sieve_integral_harman(polytope, (y, x), polynomial)
-        [1.6921 +/- 3.04e-5]
+        [1.6921 +/- 3.06e-5]
 
     which is checked against the value obtained by splitting the integral
     where the Buchstab function changes branch::
@@ -1699,7 +1739,7 @@ def sieve_integral_harman(polytope_data,
         sage: RR(A + B)
         1.69211856327702
         sage: sieve_integral_harman(polytope, (y, x), polynomial, precision=50)
-        [1.6921185632770 +/- 3.09e-14]
+        [1.6921185632770 +/- 3.28e-14]
 
     The polytope may also be a Polyhedron object, the Buchstab variables
     a pair of indices, and the integrand a polynomial::
@@ -1709,7 +1749,7 @@ def sieve_integral_harman(polytope_data,
         ....:                ieqs = [(-1/4, 1, 0), (0, -1, 1)])
         sage: R = PolynomialRing(QQ, "x", 2)
         sage: sieve_integral_harman(P, (1, 0), 1 + R.gen(0))
-        [1.6921 +/- 3.04e-5]
+        [1.6921 +/- 3.06e-5]
 
     With ``buchstab_variables = None`` the integrand carries no Buchstab
     factor. On `[1, 2]^2` with `F = 1 + x_1` the integral is
@@ -2097,72 +2137,95 @@ def balanced_polytope_integrate_polyratio(
     # In case border = True, we will project onto the first dim-1
     # coordinates before integrating.
 
-    series_ring = PowerSeriesRing(QQ, "x", num_gens = dim)
-    series_gens = series_ring.gens()
     fonction = inverse_expansion(ratios, truncation_degree - 1)
+    ring = fonction.parent()
+    if polynomial2 is None:
+        poly2_compose = ring.one()
+    else:
+        t = ring.gens()
+        poly2_compose = ring(polynomial2(*(centers[j] + rayons[j] * t[j]
+                                           for j in range(dim))))
+    # The product is truncated in the rescaled coordinates t_j and one more
+    # variable z, the last one, all of which lie in [-1, 1] on the polytope.
+    big_ring = PolynomialRing(QQ, "x", dim + 1, order = "negdeglex")
+    def lift(polynomial):
+        return big_ring({tuple(e) + (0,): coeff
+                         for e, coeff in polynomial.dict().items()})
+    poly1_scale = vol * majorant_product * majorant_polynomial2
 
     if poly1 is not None:
         numer_idx, denom_idx = ratio_idx
-        truncation_degree_denom = (
-            1 + floor(precision * RR(2).log()
-                      / (1/ratios[denom_idx]).log())
-        )
-        denom = (1 + series_gens[denom_idx] * ratios[denom_idx]
-                 + O(series_gens[denom_idx]**truncation_degree_denom))
-        inv_denom = denom.inverse()
-        numer = (
-            centers[numer_idx]
-            + series_gens[numer_idx] * rayons[numer_idx]
-        )
-        poly1_arg = (
-            (numer * inv_denom / centers[denom_idx] - midpt) * 2
-        )
-        # The caller intersects the polytope with n < t_r/t_s < n+1 and
-        # passes midpt = n + 1/2, so poly1_arg lies in [-1, 1].
-        poly1_arg_max = 1
-        # inv_denom drops the tail of 1/(1 + x_s r_s) below degree N,
-        # which is at most r_s^N / (1 - r_s); carried through the factor
-        # numer / centers[s] <= maxi[r] / centers[s] and the outer factor
-        # 2, with centers[s] * (1 - r_s) = mini[s].
-        poly1_arg_eps = (
-            2 * maxi[numer_idx]
-            * ratios[denom_idx]**truncation_degree_denom
-            / mini[denom_idx]
-        )
-        poly1_mc = poly1.monomial_coefficients()
-        poly1_val_eps = (
-            poly1_epsilon
-            + sum(abs(coeff) * ((poly1_arg_max + poly1_arg_eps)**d
-                                - poly1_arg_max**d)
-                  for d, coeff in poly1_mc.items())
-        )
-        poly1_compose = poly1.subs(poly1_arg).polynomial()
+        # z = (x_r - m x_s)/Z, with Z the largest |x_r - m x_s| at the
+        # vertices. The caller intersects the polytope with n < x_r/x_s < n+1
+        # and passes m = n + 1/2, so the argument
+        #   a = 2 (x_r/x_s - m) = (2Z/c_s) z / (1 + r_s t_s)
+        # lies in [-1, 1]. In the term of degree k of poly1, 1/(1 + r_s t_s)
+        # is truncated below degree M_k, which moves a by at most
+        # eps_k = 2 Z r_s^M_k / mini[s], and the term by at most
+        # |a_k| ((1 + eps_k)^k - 1); M_k is the least degree keeping that,
+        # times poly1_scale, within an equal share of 2^-precision.
+        Z = max(abs(v[numer_idx] - midpt * v[denom_idx])
+                for v in polytope.vertices_list())
+        poly1_coeffs = poly1.monomial_coefficients()
+        term_budget = 2**(-precision) / (poly1_scale * len(poly1_coeffs))
+        degrees = {}
+        poly1_val_eps = poly1_epsilon
+        for k, coeff in poly1_coeffs.items():
+            if k == 0:
+                continue
+            M = 1
+            while True:
+                eps = 2 * Z * ratios[denom_idx]**M / mini[denom_idx]
+                term_error = abs(coeff) * ((1 + eps)**k - 1)
+                if term_error <= term_budget:
+                    break
+                M += 1
+            degrees[k] = M
+            poly1_val_eps += term_error
+        composed = ratio_composition(poly1, 2 * Z / centers[denom_idx],
+                                     ratios[denom_idx], degrees)
+        # The terms z^k t_s^n of the composition are dropped from the top
+        # total degree down while their l1 norm, scaled like poly1_val_eps,
+        # fits within 2^-precision.
+        by_degree = {}
+        for k, coeff_in_t in enumerate(composed.list()):
+            for n, coeff in coeff_in_t.dict().items():
+                by_degree.setdefault(k + n, {})[k, n] = coeff
+        poly1_tail = 0
+        poly1_dmax = max(by_degree, default = -1)
+        for degree in sorted(by_degree, reverse = True):
+            new_majo = scalar_field(
+                poly1_scale * sum(abs(coeff)
+                                  for coeff in by_degree[degree].values())
+            ).upper()
+            if poly1_tail + new_majo > 2**(-precision):
+                break
+            poly1_tail += new_majo
+            poly1_dmax = degree - 1
+        terms = {}
+        for degree, part in by_degree.items():
+            if degree <= poly1_dmax:
+                for (k, n), coeff in part.items():
+                    exponents = [0] * (dim + 1)
+                    exponents[denom_idx], exponents[dim] = n, k
+                    terms[tuple(exponents)] = coeff
+        poly1_compose = big_ring(terms)
+        t = big_ring.gens()
+        z_image = ((centers[numer_idx] - midpt * centers[denom_idx])
+                   + rayons[numer_idx] * t[numer_idx]
+                   - midpt * rayons[denom_idx] * t[denom_idx]) / Z
     else:
-        poly1_compose = 1
+        poly1_compose = big_ring.one()
         # Upper-rounded, like poly1_epsilon and the majorants it is
         # combined with below.
         poly1_val_eps = scalar_field.zero().upper()
-
-    if polynomial2 is None:
-        poly2_compose = series_ring.one().polynomial()
-    else:
-        p2vars = polynomial2.parent().gens()
-        poly2_compose = series_ring(
-            polynomial2.subs({
-                p2vars[j]: centers[j] + series_gens[j] * rayons[j]
-                for j in range(dim)
-            })
-        ).polynomial()
-    homog = (
-        fonction
-        * (poly1_compose if poly1 is not None else 1)
-        * poly2_compose
-    ).homogeneous_components()
+        poly1_tail = 0
+        z_image = None
+    homog = (lift(fonction) * poly1_compose
+             * lift(poly2_compose)).homogeneous_components()
 
     dmax = max(homog) if homog else 0
-    estimation_queue = scalar_field(
-        vol * majorant_product * majorant_polynomial2 * poly1_val_eps
-    ).upper()
+    estimation_queue = scalar_field(poly1_scale * poly1_val_eps).upper()
     for degree in range(dmax, -1, -1):
         if degree in homog:
             upper_bound = (
@@ -2178,16 +2241,26 @@ def balanced_polytope_integrate_polyratio(
                 break
             estimation_queue += new_majo
             dmax = degree
+    estimation_queue += poly1_tail
 
-
-    polynomial_latte = sum(homog_part
-                           for degree, homog_part
-                           in homog.items()
-                           if degree <= dmax)
-    valeur = (
-        latte_integrate(translated_polytope, polynomial_latte)
-        * dilation_factor / prod(centers)
-    )
+    kept = sum((homog_part
+                for degree, homog_part
+                in homog.items()
+                if degree <= dmax),
+               big_ring.zero())
+    if z_image is not None:
+        # z is replaced within big_ring, then its exponent, now 0, dropped.
+        kept = kept.subs({big_ring.gen(dim): z_image})
+    polynomial_latte = ring({tuple(e)[:-1]: coeff
+                             for e, coeff in kept.dict().items()})
+    if polynomial_latte.is_zero():
+        # Everything was dropped, and charged.
+        valeur = 0
+    else:
+        valeur = (
+            latte_integrate(translated_polytope, polynomial_latte)
+            * dilation_factor / prod(centers)
+        )
     printifdbg(f"  I ≃ {RR(valeur)}, tail ≤ {RR(estimation_queue)} "
                f"(degree {dmax})")
 
