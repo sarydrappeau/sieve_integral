@@ -4,9 +4,10 @@ A record of the defects found in this code and of what was done about them, one
 row per finding, with the evidence that established it. The two modules of
 `code/` are covered here; later work extends the file.
 
-Everything below was checked against SageMath 10.7 and LattE 1.7.6, and
+Everything below was checked against SageMath 10.7 and LattE 1.7.6, except where
+it names Sage 11.0.beta0, and
 `cd code && sage -t --long number_theoretic_dde_solutions.py sieve_integral.py`
-passes, with 57 and 176 tests.
+passes, with 57 and 184 tests.
 
 ## `code/number_theoretic_dde_solutions.py`
 
@@ -53,8 +54,9 @@ repository consumes it.
 
 ## `code/sieve_integral.py`
 
-Rows 1 to 15 come from step 7 of the reorganisation, row 16 from step 9. Rows 1
-to 6 and 16 are the ones that could make the returned ball miss the true value.
+Rows 1 to 15 come from step 7 of the reorganisation, row 16 from step 9, row 17
+from step 18. Rows 1 to 6, 16 and 17 are the ones that could make the returned
+ball miss the true value.
 
 | # | Issue | Evidence | Resolution |
 | --- | --- | --- | --- |
@@ -74,6 +76,7 @@ to 6 and 16 are the ones that could make the returned ball miss the true value.
 | 14 | the file was a script, not a module: `load("number_theoretic_dde_solutions.py")` at top level, `SageObject` never imported, and `round` taken from the session | in a bare Python process `round(RealNumber, 3)` raises `type RealNumber doesn't define __round__`, the Sage session's `round` being `sage.misc.functional.round` | a module docstring, the GPL header, explicit imports, and the companion imported when it is on `sys.path` and `load`ed otherwise |
 | 15 | `facteur` was a parameter of `sieve_integral` but hard-coded to 1.3 inside `sieve_integral_polyratio`, so the Buchstab chain ignored it; `NUM_PROCESSORS` was a hard-coded 7; the objective of the feasibility LP was set once per inequality; both workers unpacked a flag they do not use; and `sieve_integral_polyratio` measured its polytope without naming the engine | — | `facteur` and `processes` threaded through, `NUM_PROCESSORS = max(1, (os.cpu_count() or 2) - 1)`, one `sum_over_pieces` helper for the two mappings, and the rest cleaned |
 | 16 | `are_inequalities_compatible` asked GLPK alone, which works in floating point and answers *infeasible* on some systems with tall coefficients that do have solutions; the pile loop of `balance_polytope` then dropped the cell, which was neither integrated nor charged as error | `x_1 ≥ 11367467267564/52064735576629` (that is `QQ(0.655/3)`, from the Stadlmann transcription), `x_1 ≥ x_2`, `x_2 ≥ 481/2000` is rejected, although `x_1 = x_2 = 481/2000` solves it; over the 80 examples and the three h anchors, 2 of the 19521 calls are wrong, both in `stadlmann/02` | GLPK's "feasible" is returned as it is, its "infeasible" confirmed with `solver="PPL"`; a false "feasible" is harmless, every caller ending in the exact `Polyhedron` of `polytope_if_dim` |
+| 17 | `balanced_polytope_integrate_polyratio` composed the Buchstab approximant with its argument `2(x_r/x_s − m)` in a multivariate power series ring of precision `N`, which drops every term of total degree `N` and above; nothing charged them, `poly1_val_eps` covering only the error on the argument | at the examples' own precision, at sampled points of the pieces, the error of the composed factor exceeded what was charged in 104 of 297 pieces, by up to 785 times (`merikoski/F1`), though every ball tested still contained the value 10 bits higher; on a piece of `maynard/I9` at 40 bits, its self-consistency test, the part dropped reaches `2.3e-9` against a target of `1.32e-9` (Sage 11.0.beta0) | with `z = (x_r − m x_s)/Z`, which lies in `[-1, 1]` on the piece, the argument is `(2Z/c_s) z/(1 + r_s t_s)`; each term of the approximant gets its own truncation of `1/(1 + r_s t_s)`, whose error is charged (`ratio_composition`); the composition, then the product, are pruned in the rescaled coordinates and `z`, where the l1 norm bounds them on the piece; `z` is substituted back within the same ring |
 
 ### Effect on the recorded values
 
@@ -122,6 +125,15 @@ same calls HiGHS rejects 6318, none of them wrongly, so there the confirmation
 changes no answer and costs about as much, 20.2s. It is what keeps the result
 right on Sage 10.7, which `environment.yml` prescribes.
 
+Row 17 widens 63 references, all of the Buchstab chain, by a factor 1.31 at the
+median, from 1.04 (`stadlmann/01`) to 1.63 (`stadlmann/52`); every new ball
+overlaps the old one. The examples whose pieces carry no varying Buchstab factor
+do not move. It is costly at higher precision, where the honest degree is
+higher: on the `maynard/I9` piece above, 23 against the 16 kept before, and 794s
+of CPU against 60s. The long suite takes 13474s against 2414s (Sage 11.0.beta0,
+not a timing run), nearly all of it in the self-consistency tests, 20 bits above
+each example's precision.
+
 ### Left for later
 
 * `Computation of h/computation_of_h.sage` has the same defect as row 5 in its
@@ -140,6 +152,16 @@ right on Sage 10.7, which `environment.yml` prescribes.
   before an exact `Polyhedron` whose dimension is read anyway, so there they are
   redundant. Its PPL calls take 16.0s of the 19.1s that row 16 adds; whether
   building the `Polyhedron` straight away is cheaper has not been measured.
+* Both truncation loops, of `balanced_polytope_integrate` and of the Buchstab
+  chain, keep the last homogeneous component they charge, which is then both
+  integrated and charged: sound, but in 87 of the 123 calls the plain chain
+  makes on the examples, that component is most of the error charged.
+* On pieces lying on `Σ x_i = 1`, `latte_integrate` eliminates the last
+  coordinate with Sage's generic substitution into another ring, which row 17's
+  larger polynomials make slow: on the `maynard/I9` piece above, with an
+  earlier form of row 17, about 900s of a 1010s call. Substituting within the
+  same ring and dropping the exponent was 23 times faster on row 17's own
+  substitution of `z`.
 
 ## Traps worth remembering
 
