@@ -80,8 +80,12 @@ wrote its doctests.
 #                  https://www.gnu.org/licenses/
 # ****************************************************************************
 
+import json
 import os
-from functools import partial
+import shutil
+import subprocess
+import tempfile
+from functools import lru_cache, partial
 from multiprocessing import Pool as pool
 from operator import le, ge, lt, gt, eq
 # Sage as a whole first: in a bare Python process, importing one of its
@@ -92,6 +96,7 @@ from sage.rings.real_arb import RealBallField
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
 from sage.functions.other import binomial
+from sage.arith.functions import lcm
 from sage.misc.functional import round
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
@@ -102,6 +107,7 @@ from sage.combinat.integer_vector import IntegerVectors
 from sage.misc.misc_c import prod
 from sage.geometry.polyhedron.constructor import Polyhedron
 from sage.geometry.polyhedron.base import Polyhedron_base
+from sage.interfaces.latte import to_latte_polynomial
 from sage.symbolic.expression import Expression
 from tqdm import tqdm
 
@@ -748,6 +754,263 @@ def latte_integrate(polytope, polynomial = None):
 
     return polytope_new.integrate(polynomial_new,
                                   algorithm = 'cone-decompose')
+
+
+@lru_cache(maxsize = None)
+def latte_toolchain():
+    r"""
+    Return the absolute paths of LattE's ``hyperplane-split`` and of the
+    ``integrate`` next to it, or ``None`` if they are not found.
+
+    ``hyperplane-split`` is looked for in the directory named by the
+    environment variable ``SIEVE_LATTE_BIN`` if it is set, and on ``PATH``
+    otherwise. ``integrate`` is taken from the directory of
+    ``hyperplane-split``, symbolic links resolved, and not from ``PATH``,
+    where Sage's own comes first. It must know
+    ``--interactive-integrands``: the released ``integrate`` ignores
+    options it does not know, and a session would wait forever.
+
+    The answer is cached (since it's going to be called many times),
+    ``latte_toolchain.cache_clear()`` forgets it.
+
+    EXAMPLES::
+
+        sage: toolchain = latte_toolchain()
+        sage: toolchain is None or all(os.path.isabs(p) for p in toolchain)
+        True
+    """
+    splitter = shutil.which("hyperplane-split",
+                            path = os.environ.get("SIEVE_LATTE_BIN") or None)
+    if splitter is None:
+        return None
+    splitter = os.path.realpath(splitter)
+    integrator = os.path.join(os.path.dirname(splitter), "integrate")
+    try:
+        usage = subprocess.run([integrator, "--help"],
+                               stdin = subprocess.DEVNULL,
+                               capture_output = True,
+                               text = True,
+                               timeout = 60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if "--interactive-integrands" not in usage.stdout + usage.stderr:
+        return None
+    return (splitter, integrator)
+
+
+def latte_hrep(ieqs):
+    r"""
+    Return a system of inequalities in LattE's format, each row scaled
+    to integers.
+
+    INPUT:
+
+    - ``ieqs`` -- a non-empty list of inequalities `b + Ax \geq 0` in the
+    shape ``(b, A)``.
+
+    OUTPUT: a string.
+
+    EXAMPLES::
+
+        sage: print(latte_hrep([(-2/5, 1), (3/5, -1)]))
+        2 2
+        -2 5
+        3 -5
+        <BLANKLINE>
+    """
+    rows = []
+    for ieq in ieqs:
+        row = [QQ(entry) for entry in ieq]
+        denominator = lcm([entry.denominator() for entry in row])
+        rows.append(" ".join(str(entry * denominator) for entry in row))
+    return f"{len(rows)} {len(ieqs[0])}\n" + "\n".join(rows) + "\n"
+
+
+def latte_split(ieqs, cuts):
+    r"""
+    Cut a polytope along hyperplanes `x_j = a` with LattE's
+    ``hyperplane-split``, and return the vertex cones of the pieces.
+
+    INPUT:
+
+    - ``ieqs`` -- the inequalities `b + Ax \geq 0` of a full-dimensional
+    polytope, in the shape ``(b, A)``.
+
+    - ``cuts`` -- a non-empty list of pairs ``(j, a)``, `j` counted from
+    0 and `a` rational.
+
+    OUTPUT: a list holding, for each piece of positive volume, its cone
+    file as a string. Each vertex cone is triangulated
+    (``--simplicial-cones``), so the determinants are those of the
+    simplicial cones.
+
+    EXAMPLES:
+
+    The square `[1, 2]^2`, cut along `x_1 = 3/2`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: pieces = latte_split(ieqs, [(0, 3/2)])
+        sage: len(pieces)
+        2
+        sage: pieces[0].splitlines()[:3]
+        ['LattE cone file.', 'Format version: 1', 'Ambient dimension: 2']
+    """
+    toolchain = latte_toolchain()
+    if toolchain is None:
+        raise RuntimeError("LattE's hyperplane-split was not found; "
+                           "see latte_toolchain")
+    with tempfile.TemporaryDirectory(prefix = "sieve-split-") as directory:
+        with open(os.path.join(directory, "polytope.hrep"), "w") as f:
+            f.write(latte_hrep(ieqs))
+        # cdd, which LattE calls, writes its files to the current directory
+        completed = subprocess.run(
+            [toolchain[0], "--simplicial-cones"]
+            + [f"--cut={j + 1},{QQ(a)}" for j, a in cuts]
+            + ["--output-dir=pieces", "polytope.hrep"],
+            cwd = directory, stdin = subprocess.DEVNULL,
+            capture_output = True, text = True
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("hyperplane-split failed with exit code "
+                               f"{completed.returncode}:\n"
+                               f"{completed.stderr[-2000:]}")
+        pieces = os.path.join(directory, "pieces")
+        with open(os.path.join(pieces, "manifest.json")) as f:
+            manifest = json.load(f)
+        cones = []
+        for piece in manifest["pieces"]:
+            with open(os.path.join(pieces, piece["file"])) as f:
+                cones.append(f.read())
+    return cones
+
+
+class LatteIntegrateSession:
+    r"""
+    One process of LattE's ``integrate --interactive-integrands``, which
+    answers the volume of a polytope, given by its vertex cones, and the
+    integrals of polynomials over it.
+
+    INPUT:
+
+    - ``cones`` -- a cone file, as a string.
+
+    EXAMPLES::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: pieces = latte_split(ieqs, [(0, 3/2)])
+        sage: R.<x1, x2> = QQ[]
+        sage: with LatteIntegrateSession(pieces[0]) as session:
+        ....:     print(session.volume(), session.integrate(x1),
+        ....:           session.integrate(R.zero()))
+        1/2 5/8 0
+        sage: S.<y1, y2, y3> = QQ[]
+        sage: with LatteIntegrateSession(pieces[0]) as session:
+        ....:     session.integrate(y1)
+        Traceback (most recent call last):
+        ...
+        ValueError: the polynomial has 3 variables, and the polytope 2
+    """
+
+    def __init__(self, cones):
+        self._process = None
+        self._directory = None
+        toolchain = latte_toolchain()
+        if toolchain is None:
+            raise RuntimeError("LattE's hyperplane-split and integrate were "
+                               "not found; see latte_toolchain")
+        header = "Ambient dimension:"
+        start = cones.index(header) + len(header)
+        self._dimension = int(cones[start:cones.index("\n", start)])
+        self._directory = tempfile.mkdtemp(prefix = "sieve-integrate-")
+        with open(os.path.join(self._directory, "piece.cones"), "w") as f:
+            f.write(cones)
+        # cdd, which LattE calls, writes its files to the current directory
+        self._process = subprocess.Popen(
+            [toolchain[1], "--interactive-integrands", "--valuation=integrate",
+             "--cone-decompose", "--monomials=unused",
+             "--input-vertex-cones=piece.cones"],
+            cwd = self._directory,
+            stdin = subprocess.PIPE,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.DEVNULL,
+            text = True
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass  # at interpreter exit, the modules close needs may be gone
+
+    def _ask(self, line):
+        if self._process is None:
+            raise RuntimeError("the LattE session is closed")
+        try:
+            self._process.stdin.write(line + "\n")
+            self._process.stdin.flush()
+        except BrokenPipeError:
+            pass  # the process has died; reading below says so
+        while True:
+            reply = self._process.stdout.readline()
+            if not reply:
+                self.close()
+                raise RuntimeError("LattE's integrate ended without "
+                                   f"answering {line[:200]}")
+            if reply.startswith("ANSWER:"):
+                return QQ(reply[len("ANSWER:"):].strip())
+            if reply.startswith("ERROR:"):
+                raise RuntimeError("LattE's integrate: "
+                                   + reply[len("ERROR:"):].strip())
+            # Only one line of the output interests us, but LattE might
+            # also output lines about the progress of the computation.
+
+    def volume(self):
+        r"""
+        Return the volume of the polytope.
+        """
+        return self._ask("volume")
+
+    def integrate(self, polynomial):
+        r"""
+        Return the integral over the polytope of ``polynomial``, a
+        polynomial over ``QQ`` in as many variables as the polytope has
+        coordinates. To prevent unreliable answers from LattE, we check
+        dimension match and the zero polynomial.
+        """
+        if polynomial.parent().ngens() != self._dimension:
+            raise ValueError(f"the polynomial has "
+                             f"{polynomial.parent().ngens()} variables, and "
+                             f"the polytope {self._dimension}")
+        if polynomial.is_zero():
+            return QQ.zero()
+        return self._ask(to_latte_polynomial(polynomial))
+
+    def close(self):
+        r"""
+        End the process and remove its files; closing twice is harmless.
+        """
+        process, self._process = self._process, None
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.stdin.write("quit\n")
+                process.stdin.close()
+                process.wait(timeout = 60)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait()
+            process.stdout.close()
+        directory, self._directory = self._directory, None
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors = True)
 
 
 
