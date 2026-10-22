@@ -775,13 +775,14 @@ class PolytopeSummary(SageObject):
     EXAMPLES::
 
         sage: # optional - latte_int
-        sage: polytope = polytopes.hypercube(3); polytope
+        sage: polytope = polytopes.hypercube(3) + vector((3, 3, 3)); polytope
         A 3-dimensional polyhedron in ZZ^3 defined as the convex hull of 8 vertices
         sage: summary = PolytopeSummary(polytope); summary
         Polytope summary data with 6 inequalities, full-dimensional, and volume 8
-        sage: ieqs, border, mini, maxi, volume = summary.unpack()
-        sage: border, mini, maxi, volume
-        (False, (-1, -1, -1), (1, 1, 1), 8)
+        sage: summary.border(), summary.bounding_box(), summary.volume()
+        (False, ((2, 2, 2), (4, 4, 4)), 8)
+        sage: summary.centers(), summary.rayons(), summary.ratios()
+        ((3, 3, 3), (1, 1, 1), (1/3, 1/3, 1/3))
 
     On the hyperplane `\sum_i x_i = 1` the volume is the one induced on
     that hyperplane, and ``border`` is ``True``::
@@ -790,8 +791,10 @@ class PolytopeSummary(SageObject):
         sage: summary = PolytopeSummary(polytopes.simplex(2)); summary
         Polytope summary data with 3 inequalities, cut out by the equation
         (-1, 1, ..., 1), and volume 1/2
-        sage: summary.unpack()
-        ([[1, 0, -1, -1], [0, 0, 1, 0], [0, 0, 0, 1]], True, (0, 0, 0), (1, 1, 1), 1/2)
+        sage: summary.border(), summary.bounding_box(), summary.volume()
+        (True, ((0, 0, 0), (1, 1, 1)), 1/2)
+        sage: summary.vertices()
+        [[0, 0, 1], [0, 1, 0], [1, 0, 0]]
 
     Any other polytope is rejected::
 
@@ -823,6 +826,7 @@ class PolytopeSummary(SageObject):
             )
         self._border = (len(polytope.equations_list()) == 1)
         self._ieqs = polytope.inequalities_list()
+        self._vertices = polytope.vertices_list()
         self._mini, self._maxi = polytope.bounding_box()
         self._volume = polytope.volume(engine = 'latte',
                                        algorithm = 'cone-decompose',
@@ -837,36 +841,102 @@ class PolytopeSummary(SageObject):
             + f"and volume {self._volume}"
         )
 
+    def border(self):
+        r"""
+        Return whether the polytope is cut out by `\sum_i x_i = 1`.
+        """
+        return self._border
+
+    def bounding_box(self):
+        r"""
+        Return the pair ``(mini, maxi)`` of tuples bounding the polytope.
+        """
+        return (self._mini, self._maxi)
+
+    def vertices(self):
+        r"""
+        Return the vertices of the polytope, as a list of lists.
+        """
+        return self._vertices
+
     def volume(self):
+        r"""
+        Return the volume of the polytope, with respect to
+        `dx_1 \dotsm dx_d`, or to `dx_1 \dotsm dx_{d-1}` if it is cut out
+        by `\sum_i x_i = 1`.
+        """
         return self._volume
 
-    def unpack(self):
+    def centers(self):
         r"""
-        Return all the data contained in this polytope summary.
-
-        OUTPUT:
-
-        - ``ieqs`` -- the original polytope's inequalities.
-
-        - ``border`` -- whether the polytope is cut out
-        by the equation `\sum_i x_i = 1`.
-
-        - ``mini`` -- the lower coordinates of a bounding box, as a tuple.
-        
-        - ``maxi`` -- the upper coordinates of a bounding box, as a tuple.
-
-        - ``volume`` -- the polytope's volume, either as a full-dimensional
-        polytope (if ``border`` is ``False``) or else projected onto any
-        ``d-1`` of the coordinates (if ``border`` is ``True``, with ``d``
-        the dimension of the polytope).
-
+        Return the centre `c` of the bounding box.
         """
+        return tuple((low + high) / 2
+                     for low, high in zip(self._mini, self._maxi))
 
-        return (self._ieqs, 
-                self._border,
-                self._mini,
-                self._maxi,
-                self._volume)
+    def rayons(self):
+        r"""
+        Return the half-widths `\rho` of the bounding box.
+        """
+        return tuple((high - low) / 2
+                     for low, high in zip(self._mini, self._maxi))
+
+    def ratios(self):
+        r"""
+        Return the ratios `\rho_j / c_j` of the half-widths to the centre.
+        """
+        return tuple(rayon / center
+                     for rayon, center in zip(self.rayons(), self.centers()))
+
+    def integrate_rescaled(self, polynomial):
+        r"""
+        Integrate a polynomial in the rescaled coordinates
+        `t_j = (x_j - c_j) / \rho_j`, which lie in `[-1, 1]` on the
+        polytope.
+
+        INPUT:
+
+        - ``polynomial`` -- a polynomial over ``QQ`` in `d` variables.
+
+        OUTPUT: the integral over the polytope of ``polynomial`` evaluated
+        at `t`, with respect to the measure of :meth:`volume`.
+
+        EXAMPLES:
+
+        On `[1, 3/2] \times [1, 2]`, where `t_1 = 4 x_1 - 5`, the
+        integral of `t_1^2` is a third of the area::
+
+            sage: # optional - latte_int
+            sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (3/2, -1, 0),
+            ....:                               (-1, 0, 1), (2, 0, -1)])
+            sage: R.<t1, t2> = QQ[]
+            sage: PolytopeSummary(polytope).integrate_rescaled(t1^2)
+            1/6
+
+        On the segment `x_1 + x_2 = 1`, `2/5 \leq x_1 \leq 3/5`, where
+        `t_2 = -t_1`, with respect to `dx_1`::
+
+            sage: # optional - latte_int
+            sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)],
+            ....:                       ieqs = [(-2/5, 1, 0), (-2/5, 0, 1)])
+            sage: PolytopeSummary(polytope).integrate_rescaled(t1 * t2)
+            -1/15
+        """
+        centers, rayons = self.centers(), self.rayons()
+        polytope = Polyhedron(
+            ieqs = self._ieqs,
+            eqns = [eqn_sum_one(len(centers))] if self._border else [],
+            base_ring = QQ
+        )
+        translated_polytope = (
+            polytope
+            .translation(-c for c in centers)
+            .linear_transformation(
+                diagonal_matrix(1/ray for ray in rayons)
+            )
+        )
+        dilation_factor = prod(rayons[:-1]) if self._border else prod(rayons)
+        return latte_integrate(translated_polytope, polynomial) * dilation_factor
 
 
 
@@ -1097,14 +1167,8 @@ def balanced_polytope_integrate(polytope_summary,
     printifdbg = print if verbose > 0 else (lambda *x:None)
     precision = scalar_field.precision()
 
-    ieqs, border, mini, maxi, vol = polytope_summary.unpack()
-    if len(ieqs) == 0:
-        return scalar_field.zero()
-    polytope = Polyhedron(
-        ieqs = ieqs,
-        eqns = [eqn_sum_one(len(ieqs[0])-1)] if border else [],
-        base_ring = QQ
-    )
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
 
     majorant_product = 1/prod(mini)
     trivial_bound = vol * majorant_product
@@ -1117,25 +1181,14 @@ def balanced_polytope_integrate(polytope_summary,
                    f"tail ≤ {RR(estimation_queue)} (trivial)")
         return scalar_field(valeur).add_error(estimation_queue)
 
-    dim = polytope.ambient_dimension()
-    if dim <= 1:
+    if len(mini) <= 1:
         raise NotImplementedError(
             "The polytope should be of dimension 2 or more. "
             "If you are integrating over an interval, use symbolic "
             "computation instead."
         )
-    centers = tuple((mini[j]+maxi[j])/2 for j in range(dim))
-    rayons = tuple((maxi[j]-mini[j])/2 for j in range(dim))
-    ratios = tuple(rayons[j] / centers[j] for j in range(dim))
-    translated_polytope = (
-        polytope
-        .translation(-c for c in centers)
-        .linear_transformation(
-            diagonal_matrix(1/ray for ray in rayons)
-        )
-    )
-    dilation_factor = prod(rayons[:-1]) if border else prod(rayons)
-    # We make it so that the new variables are between -1 and 1
+    centers = polytope_summary.centers()
+    ratios = polytope_summary.ratios()
 
     # The coefficients of degree n of prod_j 1/(1 + r_j x_j) all have the
     # sign (-1)^n, and their absolute values add up to the coefficient of
@@ -1157,11 +1210,8 @@ def balanced_polytope_integrate(polytope_summary,
         truncation_degree = degree
 
     polynome_latte = inverse_expansion(ratios, truncation_degree)
-    valeur = (
-        latte_integrate(translated_polytope,
-                        polynome_latte)
-        * dilation_factor / prod(centers)
-    )
+    valeur = (polytope_summary.integrate_rescaled(polynome_latte)
+              / prod(centers))
     printifdbg(f"  I ≃ {RR(valeur)}, tail ≤ {RR(estimation_queue)}"
                f" (degree {truncation_degree})")
     return scalar_field(valeur).add_error(estimation_queue)
@@ -1529,7 +1579,8 @@ def process_polytope(polytope_summary,
     polytope. This function is for use in multiprocessing.
 
     """
-    mini, maxi, vol = polytope_summary.unpack()[2:]
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
     dim = len(mini)
     # Compute the largest ratio between values, in each dimension,
     # and use this value to estimate how far we need to truncate
@@ -2078,7 +2129,8 @@ def process_polytope_polyratio(polytope_summary,
     to integrate this into the sage libraries.
     """
 
-    mini, maxi, vol = polytope_summary.unpack()[2:]
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
     dim = len(mini)
     facteur = max(maxi[j]/mini[j] for j in range(dim))
     truncation_degree, prod_rel_error = (
@@ -2146,7 +2198,8 @@ def balanced_polytope_integrate_polyratio(
         poly1_epsilon = scalar_field.zero().upper()
         poly1 = None
 
-    ieqs, border, mini, maxi, vol = polytope_summary.unpack()
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
 
     majorant_polynomial1 = (
         1 if poly1 is None
@@ -2167,32 +2220,16 @@ def balanced_polytope_integrate_polyratio(
         # negative.
         return scalar_field.zero().add_error(trivial_bound)
 
-    if len(ieqs) == 0:
-        return scalar_field.zero()
-    dim = len(ieqs[0]) - 1
+    dim = len(mini)
     if dim <= 1:
         raise NotImplementedError(
             "The polytope should be of dimension 2 or more. "
             "If you are integrating over an interval, use symbolic "
             "computation instead."
         )
-    polytope = Polyhedron(ieqs = ieqs,
-                          eqns = [eqn_sum_one(dim)] if border else [],
-                          base_ring = QQ)
-
-    centers = tuple((mini[j] + maxi[j]) / 2 for j in range(dim))
-    rayons = tuple((maxi[j] - mini[j]) / 2 for j in range(dim))
-    ratios = tuple(rayons[j] / centers[j] for j in range(dim))
-    translated_polytope = (
-        polytope
-        .translation(-c for c in centers)
-        .linear_transformation(
-            diagonal_matrix(1 / ray for ray in rayons)
-        )
-    )
-    dilation_factor = prod(rayons[:-1]) if border else prod(rayons)
-    # In case border = True, we will project onto the first dim-1
-    # coordinates before integrating.
+    centers = polytope_summary.centers()
+    rayons = polytope_summary.rayons()
+    ratios = polytope_summary.ratios()
 
     fonction = inverse_expansion(ratios, truncation_degree - 1)
     ring = fonction.parent()
@@ -2222,7 +2259,7 @@ def balanced_polytope_integrate_polyratio(
         # |a_k| ((1 + eps_k)^k - 1); M_k is the least degree keeping that,
         # times poly1_scale, within an equal share of 2^-precision.
         Z = max(abs(v[numer_idx] - midpt * v[denom_idx])
-                for v in polytope.vertices_list())
+                for v in polytope_summary.vertices())
         poly1_coeffs = poly1.monomial_coefficients()
         term_budget = 2**(-precision) / (poly1_scale * len(poly1_coeffs))
         degrees = {}
@@ -2314,10 +2351,8 @@ def balanced_polytope_integrate_polyratio(
         # Everything was dropped, and charged.
         valeur = 0
     else:
-        valeur = (
-            latte_integrate(translated_polytope, polynomial_latte)
-            * dilation_factor / prod(centers)
-        )
+        valeur = (polytope_summary.integrate_rescaled(polynomial_latte)
+                  / prod(centers))
     printifdbg(f"  I ≃ {RR(valeur)}, tail ≤ {RR(estimation_queue)} "
                f"(degree {dmax})")
 
