@@ -15,7 +15,9 @@ Each ``tests/test_*.sage`` file defines
 
 - ``TESTS``: a dict ``name -> (callable, tags)``, the tags taken from
   ``"quick"``, ``"long"`` and ``"timing"``. A test raises ``AssertionError``
-  with an informative message when it fails, and returns nothing.
+  with an informative message when it fails, and returns nothing. It raises
+  ``SkipTest`` when it cannot run here, which is reported as ``skip`` and
+  does not make the run fail.
 - ``KNOWN_ISSUES`` (optional): a dict ``name -> reason``. Those tests are
   expected to fail; a failure is reported as ``xfail`` and does not make the
   run fail, and a pass is reported as ``XPASS``, which is worth looking at.
@@ -96,7 +98,7 @@ def run(names, repeat=1, serial=False, timing=False):
     for name in names:
         test = ALL_TESTS[name][0]
         times = []
-        error = None
+        error = skipped = None
         for _ in range(repeat):
             if timing:
                 clear_values()
@@ -107,6 +109,10 @@ def run(names, repeat=1, serial=False, timing=False):
                         test()
                 else:
                     test()
+            except SkipTest as exc:
+                skipped = str(exc)
+                times.append(time() - start)
+                break
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 times.append(time() - start)
@@ -116,14 +122,18 @@ def run(names, repeat=1, serial=False, timing=False):
         # which json cannot serialise.
         seconds = float(round(statistics.median(times), 3))
         known = ALL_KNOWN_ISSUES.get(name)
-        if error is None:
+        if skipped is not None:
+            status = "skip"
+        elif error is None:
             status = "XPASS" if known else "pass"
         else:
             status = "xfail" if known else "FAIL"
         results.append({"name": name, "status": status,
                         "seconds": seconds, "error": error})
         print(f"{status:>5s}  {name:{width}s} {seconds:7.2f}s", flush=True)
-        if status == "FAIL":
+        if status == "skip":
+            print(f"       {skipped}", flush=True)
+        elif status == "FAIL":
             print(f"       {error}", flush=True)
         elif status == "xfail":
             print(f"       known issue: {known}", flush=True)
@@ -161,21 +171,28 @@ def compare(path, results):
           f"({base['provenance']['commit']}, {base['provenance']['date']}, "
           f"{'serial' if base.get('serial') else 'parallel'}):\n")
     print(f"{'test':44s} {'before':>9s} {'after':>9s} {'ratio':>7s}")
+    # If a test was skipped, either before or now, we skip the comparison.
+    skipped = {name for name, status in base.get("status", {}).items()
+               if status == "skip"}
+    skipped.update(r["name"] for r in results if r["status"] == "skip")
     shown = 0
+    total_before = total_after = 0
     for r in results:
         before = base["tests"].get(r["name"])
-        if before is None:
+        if before is None or r["name"] in skipped:
             continue
         after = r["seconds"]
         ratio = after / before if before else float("nan")
         print(f"{r['name']:44s} {before:8.2f}s {after:8.2f}s {ratio:7.2f}")
         shown += 1
+        total_before += before
+        total_after += after
     missing = [r["name"] for r in results if r["name"] not in base["tests"]]
     if missing:
         print(f"\nnot in the baseline: {', '.join(missing)}")
-    total_before = sum(base["tests"].get(r["name"], 0) for r in results)
-    total_after = sum(r["seconds"] for r in results
-                      if r["name"] in base["tests"])
+    left_out = [r["name"] for r in results if r["name"] in skipped]
+    if left_out:
+        print(f"\nleft out, as skipped on one side: {', '.join(left_out)}")
     if shown and total_before:
         print(f"\n{'total of the ' + str(shown) + ' common tests':44s} "
               f"{total_before:8.2f}s {total_after:8.2f}s "

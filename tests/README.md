@@ -5,8 +5,8 @@ exercises need the Sage preparser and `load`. **Run everything from
 the repository root.**
 
 ```
-sage tests/run_tests.sage                  # the quick tests, about 20 seconds
-sage tests/run_tests.sage --long           # everything, expect about thirty minutes
+sage tests/run_tests.sage                  # the quick tests, under a minute
+sage tests/run_tests.sage --long           # everything, about an hour and a half
 sage tests/run_tests.sage --only-timing    # the micro-benchmarks
 sage tests/run_tests.sage 'regression/chen*' 'closedform/*'   # globs on names
 sage tests/run_tests.sage --long --list    # print the selected names, run nothing
@@ -14,7 +14,9 @@ sage tests/run_tests.sage --long --list    # print the selected names, run nothi
 
 The runner exits non-zero if a test fails. A test listed in `KNOWN_ISSUES` is
 expected to fail: its failure is reported as `xfail` and does not fail the run,
-and if it passes, the line reads `XPASS`, which is worth looking into.
+and if it passes, the line reads `XPASS`, which is worth looking into. A test
+that cannot run here is reported as `skip`, with the reason, and does not fail
+the run either.
 
 ## What is checked
 
@@ -28,6 +30,7 @@ h tests of `Computation of h/computation_of_h.sage`:
 | `bound/stadlmann/NN` | the value is below the bound of Stadlmann's paper |
 | `notebook/h/...` | the h test overlap the outputs the notebook has stored |
 | `closedform/...` | the docstring examples against their closed forms, computed as balls with Arb |
+| `engine/<example>` | the value with LattE's `hyperplane-split` overlaps the value with Sage's slicing (the two engines of `balance_polytope`); skipped where `latte_toolchain()` does not find the programs, as on CI |
 
 The criterion is always that the result is an **enclosure**: checks use
 `overlaps`, never equality of balls. A value may move, as long as it still
@@ -60,7 +63,8 @@ sage tests/run_tests.sage --long --time after.json --compare before.json
 
 `--time` writes the wall-clock time of every test that ran, with the commit,
 the date and the machine; `--repeat N` (3 by default with `--time`) keeps the
-median of N runs. `--compare` prints a before/after table with the ratios.
+median of N runs. `--compare` prints a before/after table with the ratios,
+leaving out the tests skipped on either side.
 `--serial` replaces the library's pool of workers by an in-process map: a
 serial time is only comparable with another serial time.
 
@@ -90,8 +94,10 @@ KNOWN_ISSUES = {"group/name": "why it fails, and which step fixes it"}
 ```
 
 A test raises `AssertionError` with a message that says what was expected and
-what came out. The helpers of `tests/harness.sage` are already loaded:
-`example_value(name, extra_bits=0)` caches values, `examples_namespace()`,
+what came out, and `SkipTest` when it cannot run here. The helpers of
+`tests/harness.sage` are already loaded: `example_value(name, extra_bits=0,
+engine=None)` caches values, `balancing_engine(engine)` makes
+`balance_polytope` use the given engine, `examples_namespace()`,
 `h_namespace()` and `dde_namespace()` give access to the loaded scripts,
 `in_directory(path)` runs a body elsewhere, and `ball_from_json` rebuilds a
 stored ball.
