@@ -85,6 +85,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from functools import lru_cache, partial
 from multiprocessing import Pool as pool
 from operator import le, ge, lt, gt, eq
@@ -1352,15 +1353,27 @@ class PolytopeSummary(SageObject):
         )
         return latte_integrate(translated_polytope, polynomial) * self.jacobian()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def close(self):
+        r"""
+        Release the processes the summary holds: none here, a LattE
+        session for a :class:`SplitPieceSummary`.
+        """
+
 
 class SplitPieceSummary(PolytopeSummary):
     r"""
     The summary of a piece written by LattE's ``hyperplane-split``,
     given by its vertex cones. It implements two methods to compute
-    volumes and integrals on this piece.  At the first question, it
-    opens one LattE interactive session, and reuses it on further
-    questions.  The __getstate__ method is there to prevent two pieces
-    using the same session.
+    volumes and integrals on this piece.  Inside a ``with`` block, one
+    LattE interactive session answers every question; outside, each
+    question opens a session of its own.  The __getstate__ method is
+    there to prevent two pieces using the same session.
 
     If the piece lies on `\sum_i x_i = 1`, the cones are those of its
     image after the elimination of `x_d`.
@@ -1393,17 +1406,6 @@ class SplitPieceSummary(PolytopeSummary):
         sage: integrate(integrate(p(8*x1 - 9, 2*x2 - 3), x1, 1, 5/4),
         ....:           x2, 1, 2)
         -1/8
-
-    A copy, which goes through pickling's ``__getstate__``, opens a
-    session of its own::
-
-        sage: # optional - latte_split
-        sage: from copy import copy
-        sage: duplicate = copy(piece)
-        sage: piece.close()
-        sage: duplicate.integrate_rescaled(p), duplicate.volume()
-        (-1/8, 1/4)
-        sage: duplicate.close()
 
     On `\sum_i x_i = 1`, with `x_1, x_2, x_3 \geq 1/5`, cut at
     `x_1 = 2/5`; the cones are those of the image on `(x_1, x_2)`::
@@ -1452,10 +1454,9 @@ class SplitPieceSummary(PolytopeSummary):
         )
 
     def __enter__(self):
+        if self._session is None:
+            self._session = LatteIntegrateSession(self._cones)
         return self
-
-    def __exit__(self, *exc_info):
-        self.close()
 
     def __getstate__(self):
         state = dict(self.__dict__)
@@ -1463,9 +1464,10 @@ class SplitPieceSummary(PolytopeSummary):
         return state
 
     def _latte(self):
+        # The session of the with block, or one for this question only.
         if self._session is None:
-            self._session = LatteIntegrateSession(self._cones)
-        return self._session
+            return LatteIntegrateSession(self._cones)
+        return nullcontext(self._session)
 
     def volume(self):
         r"""
@@ -1473,7 +1475,8 @@ class SplitPieceSummary(PolytopeSummary):
         or to `dx_1 \dotsm dx_{d-1}` if it lies on `\sum_i x_i = 1`.
         """
         if self._volume is None:
-            self._volume = self._latte().volume() * self.jacobian()
+            with self._latte() as session:
+                self._volume = session.volume() * self.jacobian()
         return self._volume
 
     def integrate_rescaled(self, polynomial):
@@ -1490,7 +1493,8 @@ class SplitPieceSummary(PolytopeSummary):
                     - sum(rayons[j] * t[j] for j in range(len(t))))
             polynomial = substitute_last_coordinate(polynomial, ring,
                                                     last / rayons[-1])
-        return self._latte().integrate(polynomial) * self.jacobian()
+        with self._latte() as session:
+            return session.integrate(polynomial) * self.jacobian()
 
     def close(self):
         r"""
@@ -1963,7 +1967,7 @@ def check_positive_orthant(polytope):
             )
 
 
-def balance_polytope(polytope, facteur, verbose = 0):
+def balance_polytope(polytope, facteur, verbose = 0, engine = None):
     r"""
     Partition a polytope into pieces where the coordinates vary within a
     certain factor of each other.
@@ -1975,6 +1979,12 @@ def balance_polytope(polytope, facteur, verbose = 0):
     - ``facteur`` -- a number greater than 1.
 
     - ``verbose`` -- a boolean.
+
+    - ``engine`` (default: ``None``) -- ``"split"`` cuts the polytope with
+    LattE's ``hyperplane-split`` (see :func:`balance_polytope_split`),
+    ``"sage"`` slices it in Sage (see :func:`balance_polytope_sage`);
+    ``None`` takes ``"split"`` if :func:`latte_toolchain` finds the
+    programs, ``"sage"`` otherwise.
 
     OUTPUT: a list of elements of class PolytopeSummary, each of which
     describes a polytope `Q` which is balanced in the sense that for every
@@ -2025,6 +2035,19 @@ def balance_polytope(polytope, facteur, verbose = 0):
         sage: add(Q.volume() for Q in pieces) == polytope.volume()
         True
 
+    Both engines cut along the same grid, into the same pieces::
+
+        sage: # optional - latte_int latte_split
+        sage: cube = polytopes.hypercube(3) + vector((4, 4, 4))
+        sage: simplex = vector((1/10,) * 4) + 6/10 * polytopes.simplex(3)
+        sage: for P, facteur in ((cube, 1.3), (simplex, 2)):
+        ....:     pieces = {engine: sorted((Q.bounding_box(), Q.volume())
+        ....:                              for Q in balance_polytope(
+        ....:                                  P, facteur, engine = engine))
+        ....:               for engine in ("split", "sage")}
+        ....:     print(len(pieces["split"]), pieces["split"] == pieces["sage"])
+        8 True
+        39 True
     """
     printifdbg = print if verbose > 0 else (lambda *x:None)
     dim = polytope.ambient_dimension()
@@ -2034,6 +2057,11 @@ def balance_polytope(polytope, facteur, verbose = 0):
     facteur = RR(facteur)
     if facteur <= 1:
         raise ValueError("The balancing parameter must be greater than 1.")
+    if engine is None:
+        engine = "sage" if latte_toolchain() is None else "split"
+    if engine not in ("split", "sage"):
+        raise ValueError('The engine should be "split", "sage" or None, '
+                         f"not {engine!r}.")
 
     def facteur_pow(i):
         # Rounded to three decimals, to keep the grid coordinates
@@ -2043,10 +2071,6 @@ def balance_polytope(polytope, facteur, verbose = 0):
     def number_of_cuts(low, high):
         """
         The smallest ``n >= 1`` with ``low * facteur_pow(n) >= high``.
-
-        The cells along one coordinate are the intervals
-        ``[low * facteur_pow(i), low * facteur_pow(i+1)]``, so they cover
-        ``[low, high]`` exactly when the last line reaches ``high``.
         """
         cuts = 1
         while low * facteur_pow(cuts) < high:
@@ -2060,6 +2084,61 @@ def balance_polytope(polytope, facteur, verbose = 0):
 
     printifdbg(f"Number of slices = {nombre_decoupes}")
 
+    # The lines along each coordinate, from its lower bound to at least
+    # its upper bound.
+    grid = tuple(tuple(mini[j] * facteur_pow(exponent)
+                       for exponent in range(nombre_decoupes[j] + 1))
+                 for j in range(dim))
+
+    printifdbg(f"Slicing with the {engine} engine...")
+    if engine == "split":
+        split_polytopes = balance_polytope_split(polytope, grid, border)
+    else:
+        split_polytopes = balance_polytope_sage(polytope, grid, border,
+                                                verbose = verbose)
+
+    printifdbg(f"Slicing done, there are {len(split_polytopes)} polytopes.")
+
+    return split_polytopes
+
+
+def balance_polytope_sage(polytope, grid, border, verbose = 0):
+    r"""
+    Slice a polytope along a grid in Sage, for :func:`balance_polytope`.
+
+    Each cell is tested for emptiness, then built as a Polyhedron, whose
+    volume LattE computes.
+
+    INPUT:
+
+    - ``polytope`` (Polyhedron object) -- a polytope.
+
+    - ``grid`` -- for each coordinate, the increasing tuple of lines
+    along it, the cells lying between consecutive lines.
+
+    - ``border`` -- whether ``polytope`` is cut out by `\sum_i x_i = 1`.
+
+    - ``verbose`` -- if positive, show a progress bar over the cells.
+
+    OUTPUT: a list of :class:`PolytopeSummary` objects.
+
+    EXAMPLES:
+
+    The segment `x_1 + x_2 = 1`, `x_1, x_2 \geq 1/5`, meets three cells::
+
+        sage: # optional - latte_int
+        sage: segment = Polyhedron(eqns = [(-1, 1, 1)],
+        ....:                      ieqs = [(-1/5, 1, 0), (-1/5, 0, 1)])
+        sage: grid = ((1/5, 2/5, 4/5), (1/5, 2/5, 4/5))
+        sage: pieces = balance_polytope_sage(segment, grid, True)
+        sage: sorted(Q.bounding_box() for Q in pieces)
+        [((1/5, 3/5), (2/5, 4/5)),
+         ((2/5, 2/5), (3/5, 3/5)),
+         ((3/5, 1/5), (4/5, 2/5))]
+    """
+    printifdbg = print if verbose > 0 else (lambda *x:None)
+    dim = polytope.ambient_dimension()
+
     # Compute the inequalities lists which describe the cuts, in each
     # dimension.
     planches = []
@@ -2067,9 +2146,9 @@ def balance_polytope(polytope, facteur, verbose = 0):
         ieq_coeff_plus = (0,) * j + (1,) + (0,) * (dim-1-j)
         ieq_coeff_minus = (0,) * j + (-1,) + (0,) * (dim-1-j)
         planches.append(tuple(
-            [(-mini[j]*facteur_pow(exponent),) + ieq_coeff_plus,
-             (mini[j]*facteur_pow(exponent+1),) + ieq_coeff_minus]
-            for exponent in range(nombre_decoupes[j])
+            [(-grid[j][exponent],) + ieq_coeff_plus,
+             (grid[j][exponent+1],) + ieq_coeff_minus]
+            for exponent in range(len(grid[j]) - 1)
         ))
 
     ieqs_pile = [polytope.inequalities_list()]
@@ -2094,8 +2173,73 @@ def balance_polytope(polytope, facteur, verbose = 0):
                 PolytopeSummary(current_polytope)
             )
 
-    printifdbg(f"Slicing done, there are {len(split_polytopes)} polytopes.")
+    return split_polytopes
 
+
+def balance_polytope_split(polytope, grid, border):
+    r"""
+    Cut a polytope along a grid with LattE's ``hyperplane-split``, for
+    :func:`balance_polytope`.
+
+    ``hyperplane-split`` derives the cones of every piece from those of
+    the polytope, and each piece's volume is computed later, by the LattE
+    session that integrates over it. A polytope with no line of the grid
+    inside is a single piece, summarised by Sage: ``hyperplane-split``
+    needs a cut.
+
+    On `\sum_i x_i = 1`, the cut `x_d = a` is not parallel to an axis
+    once `x_d` is eliminated. The polytope is therefore sliced along
+    `x_d` in Sage first, and each slice, `x_d` eliminated, is cut along
+    the other axes.
+
+    INPUT: as for :func:`balance_polytope_sage`.
+
+    OUTPUT: a list of :class:`SplitPieceSummary` objects, and of
+    :class:`PolytopeSummary` objects for the uncut polytopes.
+
+    EXAMPLES:
+
+    The segment of :func:`balance_polytope_sage`: the slice
+    `1/5 \leq x_2 \leq 2/5` has no line inside, the slice
+    `2/5 \leq x_2 \leq 4/5` is cut at `x_1 = 2/5`::
+
+        sage: # optional - latte_int latte_split
+        sage: segment = Polyhedron(eqns = [(-1, 1, 1)],
+        ....:                      ieqs = [(-1/5, 1, 0), (-1/5, 0, 1)])
+        sage: grid = ((1/5, 2/5, 4/5), (1/5, 2/5, 4/5))
+        sage: pieces = balance_polytope_split(segment, grid, True)
+        sage: [(type(Q).__name__, Q.bounding_box()) for Q in pieces]
+        [('PolytopeSummary', ((3/5, 1/5), (4/5, 2/5))),
+         ('SplitPieceSummary', ((1/5, 3/5), (2/5, 4/5))),
+         ('SplitPieceSummary', ((2/5, 2/5), (3/5, 3/5)))]
+    """
+    dim = polytope.ambient_dimension()
+
+    def pieces(whole, ieqs, axes):
+        mini, maxi = whole.bounding_box()
+        cuts = [(j, line) for j in range(axes) for line in grid[j]
+                if mini[j] < line < maxi[j]]
+        if not cuts:
+            return [PolytopeSummary(whole)]
+        return [SplitPieceSummary(cones, border)
+                for cones in latte_split(ieqs, cuts)]
+
+    if not border:
+        return pieces(polytope, polytope.inequalities_list(), dim)
+    split_polytopes = []
+    for low, high in zip(grid[-1], grid[-1][1:]):
+        slab = polytope_if_dim(polytope.inequalities_list()
+                               + [(-low,) + (0,) * (dim - 1) + (1,),
+                                  (high,) + (0,) * (dim - 1) + (-1,)],
+                               dim, True)
+        if slab is None:
+            continue
+        equation = slab.equations_list()[0]
+        ieqs = [make_ieq_fulldim_from_eqn(ieq, equation)
+                for ieq in slab.inequalities_list()]
+        # An inequality parallel to the equation becomes 0 >= 0.
+        ieqs = [ieq for ieq in ieqs if any(ieq[1:])]
+        split_polytopes += pieces(slab, ieqs, dim - 1)
     return split_polytopes
 
 
@@ -2141,19 +2285,22 @@ def process_polytope(polytope_summary,
     polytope. This function is for use in multiprocessing.
 
     """
-    mini, maxi = polytope_summary.bounding_box()
-    vol = polytope_summary.volume()
-    dim = len(mini)
-    # Compute the largest ratio between values, in each dimension,
-    # and use this value to estimate how far we need to truncate
-    facteur = max(maxi[j]/mini[j] for j in range(dim))
-    truncation_degree, prod_rel_error = errorbound_inverse_tail(
-        vol/prod(mini), (facteur-1)/(facteur+1), dim, scalar_field
-    )
-    val = balanced_polytope_integrate(polytope_summary,
-                                      truncation_degree,
-                                      scalar_field,
-                                      verbose = verbose)
+    # The volume and the integral come from the same LattE session, if
+    # the piece has one, closed once the piece is done.
+    with polytope_summary:
+        mini, maxi = polytope_summary.bounding_box()
+        vol = polytope_summary.volume()
+        dim = len(mini)
+        # Compute the largest ratio between values, in each dimension,
+        # and use this value to estimate how far we need to truncate
+        facteur = max(maxi[j]/mini[j] for j in range(dim))
+        truncation_degree, prod_rel_error = errorbound_inverse_tail(
+            vol/prod(mini), (facteur-1)/(facteur+1), dim, scalar_field
+        )
+        val = balanced_polytope_integrate(polytope_summary,
+                                          truncation_degree,
+                                          scalar_field,
+                                          verbose = verbose)
     majorant_product = 1 / prod(mini)
     abs_error = vol * majorant_product * prod_rel_error
     return scalar_field(val).add_error(abs_error)
@@ -2161,7 +2308,7 @@ def process_polytope(polytope_summary,
 
 
 def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
-                   processes = None, verbose = 0):
+                   processes = None, verbose = 0, engine = None):
     r"""
     Compute the integral over the given polytope of
     ``dt_1 ... dt_d / t_1 ... t_d``.
@@ -2189,6 +2336,10 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
 
     - ``verbose`` (default: False) -- if positive, will print updates on the
     computation.
+
+    - ``engine`` (default: ``None``) -- what cuts the polytope into
+    balanced pieces, LattE's ``hyperplane-split`` (``"split"``) or Sage
+    (``"sage"``); see :func:`balance_polytope`.
 
 
     OUTPUT: a ``RealBall`` containing the value of the requested integral.
@@ -2227,6 +2378,14 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
         sage: x = var("x")
         sage: RR(1/2 * integrate(log(6 - x)/x, (x, 1, 5)))
         0.956913527101737
+
+    Both engines cut it into the same pieces, and give the same value::
+
+        sage: # optional - latte_int latte_split
+        sage: sieve_integral(polytope, engine = "split")
+        [0.9569 +/- 3.06e-5]
+        sage: sieve_integral(polytope, engine = "sage")
+        [0.9569 +/- 3.06e-5]
 
     The polytope may also be given as symbolic inequalities::
 
@@ -2293,7 +2452,8 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
 
     balanced_polytopes = balance_polytope(polytope,
                                           facteur,
-                                          verbose = verbose - 1)
+                                          verbose = verbose - 1,
+                                          engine = engine)
     process_polytope_partial = partial(process_polytope,
                                        scalar_field = scalar_field,
                                        verbose = verbose - 1)
@@ -2356,7 +2516,8 @@ def sieve_integral_harman(polytope_data,
                           precision = 20,
                           facteur = 1.3,
                           processes = None,
-                          verbose = 0):
+                          verbose = 0,
+                          engine = None):
     r"""
     Compute the integral over a polytope of the function given by
     `B(x_i/x_j) F(x) / x_1 \dotsb x_d`, where `B(u) = u \omega(u)`
@@ -2388,6 +2549,8 @@ def sieve_integral_harman(polytope_data,
 
     - ``verbose`` (default: 0) -- if positive, gives information on the
     computation.
+
+    - ``engine`` (default: ``None``) -- as in :func:`sieve_integral`.
 
     OUTPUT: a RealBall containing the value of the integral.
 
@@ -2550,7 +2713,8 @@ def sieve_integral_harman(polytope_data,
             facteur = facteur,
             processes = processes,
             verbose = verbose,
-            precision = precision
+            precision = precision,
+            engine = engine
         )
 
     # We load an approximation of the Buchstab B(u) = u ω(u) function
@@ -2604,7 +2768,8 @@ def sieve_integral_harman(polytope_data,
                 facteur = facteur,
                 processes = processes,
                 verbose = verbose,
-                precision = precision
+                precision = precision,
+                engine = engine
             )
 
 
@@ -2619,7 +2784,8 @@ def sieve_integral_polyratio(polytope,
                              facteur = 1.3,
                              processes = None,
                              verbose = 0,
-                             precision = 20):
+                             precision = 20,
+                             engine = None):
     """
     Computes the sieve integral over the Polyhedron P, of
     polynomial1(2*(t_r / t_s - midpt)) * polynomial2(t) / prod(t_j).
@@ -2657,7 +2823,8 @@ def sieve_integral_polyratio(polytope,
 
     split_polytopes = balance_polytope(polytope,
                                        facteur = facteur,
-                                       verbose = verbose - 1)
+                                       verbose = verbose - 1,
+                                       engine = engine)
     process_polytope_partial = partial(process_polytope_polyratio,
                                        scalar_field = scalar_field,
                                        polynomial1 = polynomial1,
@@ -2691,26 +2858,28 @@ def process_polytope_polyratio(polytope_summary,
     to integrate this into the sage libraries.
     """
 
-    mini, maxi = polytope_summary.bounding_box()
-    vol = polytope_summary.volume()
-    dim = len(mini)
-    facteur = max(maxi[j]/mini[j] for j in range(dim))
-    truncation_degree, prod_rel_error = (
-        errorbound_inverse_tail(vol/prod(mini),
-                                (facteur-1)/(facteur+1),
-                                dim,
-                                scalar_field)
-    )
-    value = balanced_polytope_integrate_polyratio(
-        polytope_summary,
-        polynomial1,
-        midpt,
-        ratio_idx,
-        polynomial2,
-        truncation_degree,
-        scalar_field,
-        verbose = verbose - 1
-    )
+    # As in process_polytope, one LattE session serves the whole piece.
+    with polytope_summary:
+        mini, maxi = polytope_summary.bounding_box()
+        vol = polytope_summary.volume()
+        dim = len(mini)
+        facteur = max(maxi[j]/mini[j] for j in range(dim))
+        truncation_degree, prod_rel_error = (
+            errorbound_inverse_tail(vol/prod(mini),
+                                    (facteur-1)/(facteur+1),
+                                    dim,
+                                    scalar_field)
+        )
+        value = balanced_polytope_integrate_polyratio(
+            polytope_summary,
+            polynomial1,
+            midpt,
+            ratio_idx,
+            polynomial2,
+            truncation_degree,
+            scalar_field,
+            verbose = verbose - 1
+        )
     majorant_product = 1/prod(mini)
     majorant_polynomial1 = (
         1 if polynomial1 is None
