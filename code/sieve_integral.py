@@ -93,10 +93,12 @@ from operator import le, ge, lt, gt, eq
 import sage.all  # noqa: F401
 from sage.structure.sage_object import SageObject
 from sage.rings.real_arb import RealBallField
+from sage.rings.integer_ring import ZZ
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
 from sage.functions.other import binomial
 from sage.arith.functions import lcm
+from sage.arith.misc import gcd
 from sage.misc.functional import round
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
@@ -1013,6 +1015,147 @@ class LatteIntegrateSession:
             shutil.rmtree(directory, ignore_errors = True)
 
 
+def parse_latte_cones(text):
+    r"""
+    Return the cones of a cone file, as triples ``(vertex, rays,
+    determinant)``: a tuple of rationals, a tuple of tuples of integers,
+    and an integer, ``0`` meaning not computed. The other fields of the
+    file are not read.
+
+    EXAMPLES::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: sorted(parse_latte_cones(latte_split(ieqs, [(0, 5/4)])[0]))
+        [((1, 1), ((0, 1), (1, 0)), -1),
+         ((1, 2), ((0, -1), (1, 0)), 1),
+         ((5/4, 1), ((-1, 0), (0, 1)), -1),
+         ((5/4, 2), ((-1, 0), (0, -1)), 1)]
+    """
+    def vector(line, ring):
+        entries = line[line.index("[") + 1:line.index("]")].split()
+        return tuple(ring(entry) for entry in entries)
+
+    cones = []
+    lines = iter(text.splitlines())
+    for line in lines:
+        if not line.startswith("Vertex:"):
+            continue
+        vertex = vector(line, QQ)
+        next(lines)  # Extreme rays:
+        rays = []
+        line = next(lines)
+        while line.startswith("["):
+            rays.append(vector(line, ZZ))
+            line = next(lines)
+        cones.append((vertex, tuple(rays), ZZ(line[len("Determinant:"):])))
+    return cones
+
+
+def format_latte_cones(cones):
+    r"""
+    Return a cone file holding ``cones``, triples as
+    :func:`parse_latte_cones` returns them. The facets are written empty,
+    and the dual determinant ``0``.
+
+    EXAMPLES::
+
+        sage: cones = [((-1, 1/3), ((1, 0), (0, -1)), -1)]
+        sage: print(format_latte_cones(cones))
+        LattE cone file.
+        Format version: 1
+        Ambient dimension: 2
+        Homogenized: 0
+        Dualized: 0
+        Unbounded: 0
+        ==========
+        Cone.
+        Coefficient: 1
+        Vertex: [-1 1/3]
+        Extreme rays:
+        [1 0]
+        [0 -1]
+        Determinant:-1
+        Facets:
+        []
+        Dual determinant:0
+        Lattice points in parallelepiped:
+        []
+        ==========
+        <BLANKLINE>
+        sage: parse_latte_cones(format_latte_cones(cones)) == cones
+        True
+    """
+    def vector(entries):
+        return "[" + " ".join(str(entry) for entry in entries) + "]"
+
+    header = ["LattE cone file.",
+              "Format version: 1",
+              f"Ambient dimension: {len(cones[0][0])}",
+              "Homogenized: 0",
+              "Dualized: 0",
+              "Unbounded: 0"]
+    blocks = []
+    for vertex, rays, determinant in cones:
+        blocks.append("\n".join(
+            ["==========", "Cone.", "Coefficient: 1",
+             "Vertex: " + vector(vertex), "Extreme rays:"]
+            + [vector(ray) for ray in rays]
+            + [f"Determinant:{determinant}", "Facets:", "[]",
+               "Dual determinant:0", "Lattice points in parallelepiped:",
+               "[]", "=========="]
+        ))
+    return "\n".join(header) + "\n" + "\n\n".join(blocks) + "\n"
+
+
+def rescale_latte_cones(cones, centers, rayons):
+    r"""
+    Return the image of ``cones`` under `t_j = (x_j - c_j) / \rho_j`,
+    for the centres `c` and the half-widths `\rho > 0`.
+
+    The rays are made primitive again, which multiplies the image of ray
+    `i` by some `\lambda_i > 0`: the determinant is multiplied by
+    `\prod_i \lambda_i / \prod_j \rho_j`, and ``0`` stays ``0``.
+
+    EXAMPLES:
+
+    Under `\rho = (1/2, 1/3)` the rays `(1, 1)` and `(1, 0)` become
+    `(2, 3)` and `(2, 0)`, made primitive into `(1, 0)`, so the
+    determinant is `-3`, not `-6`::
+
+        sage: rescale_latte_cones([((1, 1), ((1, 1), (1, 0)), -1)],
+        ....:                     (1, 0), (1/2, 1/3))
+        [((0, 3), ((2, 3), (1, 0)), -3)]
+
+    The determinants are those of the rescaled rays::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (-1, 0, 1), (6, -1, -2)]
+        sage: cones = parse_latte_cones(latte_split(ieqs, [(0, 2)])[1])
+        sage: sorted(set(vertex for vertex, _, _ in cones))
+        [(2, 1), (2, 2), (4, 1)]
+        sage: rescaled = rescale_latte_cones(cones, (3, 3/2), (1, 1/2))
+        sage: all(matrix(rays).det() == determinant
+        ....:     for _, rays, determinant in rescaled)
+        True
+    """
+    jacobian = prod(rayons)
+    rescaled = []
+    for vertex, rays, determinant in cones:
+        vertex = tuple((x - c) / rho
+                       for x, c, rho in zip(vertex, centers, rayons))
+        images = []
+        for ray in rays:
+            image = [QQ(entry) / rho for entry, rho in zip(ray, rayons)]
+            multiplier = lcm([entry.denominator() for entry in image])
+            image = [ZZ(entry * multiplier) for entry in image]
+            divisor = gcd(image)
+            images.append(tuple(entry // divisor for entry in image))
+            determinant *= multiplier / divisor
+        rescaled.append((vertex, tuple(images), ZZ(determinant / jacobian)))
+    return rescaled
+
+
 
 class PolytopeSummary(SageObject):
     r"""
@@ -1151,6 +1294,15 @@ class PolytopeSummary(SageObject):
         return tuple(rayon / center
                      for rayon, center in zip(self.rayons(), self.centers()))
 
+    def jacobian(self):
+        r"""
+        Return `\prod_j \rho_j`, which turns `dt` into the measure of
+        :meth:`volume`: the product is over `j < d` if the polytope is cut
+        out by `\sum_i x_i = 1`.
+        """
+        rayons = self.rayons()
+        return prod(rayons[:-1]) if self._border else prod(rayons)
+
     def integrate_rescaled(self, polynomial):
         r"""
         Integrate a polynomial in the rescaled coordinates
@@ -1198,8 +1350,155 @@ class PolytopeSummary(SageObject):
                 diagonal_matrix(1/ray for ray in rayons)
             )
         )
-        dilation_factor = prod(rayons[:-1]) if self._border else prod(rayons)
-        return latte_integrate(translated_polytope, polynomial) * dilation_factor
+        return latte_integrate(translated_polytope, polynomial) * self.jacobian()
+
+
+class SplitPieceSummary(PolytopeSummary):
+    r"""
+    The summary of a piece written by LattE's ``hyperplane-split``,
+    given by its vertex cones. It implements two methods to compute
+    volumes and integrals on this piece.  At the first question, it
+    opens one LattE interactive session, and reuses it on further
+    questions.  The __getstate__ method is there to prevent two pieces
+    using the same session.
+
+    If the piece lies on `\sum_i x_i = 1`, the cones are those of its
+    image after the elimination of `x_d`.
+
+    INPUT:
+
+    - ``cones`` -- a cone file, as a string.
+
+    - ``border`` -- whether the piece lies on `\sum_i x_i = 1`.
+
+    EXAMPLES:
+
+    A piece of `[1, 2]^2`, on which `t_1 = 8 x_1 - 9` and
+    `t_2 = 2 x_2 - 3`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: piece = SplitPieceSummary(latte_split(ieqs, [(0, 5/4)])[0],
+        ....:                           False)
+        sage: piece
+        Polytope summary data with 4 vertices, full-dimensional, given
+        by LattE's cones
+        sage: piece.bounding_box(), piece.volume()
+        (((1, 1), (5/4, 2)), 1/4)
+        sage: R.<t1, t2> = QQ[]
+        sage: p = t1^2 * t2 - 3*t2^2 + 1/2
+        sage: piece.integrate_rescaled(p)
+        -1/8
+        sage: x1, x2 = var("x1, x2")
+        sage: integrate(integrate(p(8*x1 - 9, 2*x2 - 3), x1, 1, 5/4),
+        ....:           x2, 1, 2)
+        -1/8
+
+    A copy, which goes through pickling's ``__getstate__``, opens a
+    session of its own::
+
+        sage: # optional - latte_split
+        sage: from copy import copy
+        sage: duplicate = copy(piece)
+        sage: piece.close()
+        sage: duplicate.integrate_rescaled(p), duplicate.volume()
+        (-1/8, 1/4)
+        sage: duplicate.close()
+
+    On `\sum_i x_i = 1`, with `x_1, x_2, x_3 \geq 1/5`, cut at
+    `x_1 = 2/5`; the cones are those of the image on `(x_1, x_2)`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1/5, 1, 0), (-1/5, 0, 1), (4/5, -1, -1)]
+        sage: T.<t1, t2, t3> = QQ[]
+        sage: with SplitPieceSummary(latte_split(ieqs, [(0, 2/5)])[0],
+        ....:                        True) as piece:
+        ....:     print(piece.bounding_box(), piece.volume())
+        ....:     print(piece.integrate_rescaled(t1 * t3^2 - t2))
+        ((1/5, 1/5, 1/5), (2/5, 3/5, 3/5)) 3/50
+        17/1500
+        sage: polytope = Polyhedron(eqns = [eqn_sum_one(3)],
+        ....:                       ieqs = [(-1/5, 1, 0, 0), (-1/5, 0, 1, 0),
+        ....:                               (-1/5, 0, 0, 1), (2/5, -1, 0, 0)])
+        sage: summary = PolytopeSummary(polytope)
+        sage: summary.bounding_box(), summary.volume()
+        (((1/5, 1/5, 1/5), (2/5, 3/5, 3/5)), 3/50)
+        sage: summary.integrate_rescaled(t1 * t3^2 - t2)
+        17/1500
+    """
+
+    def __init__(self, cones, border):
+        cones = parse_latte_cones(cones)
+        points = list(dict.fromkeys(vertex for vertex, _, _ in cones))
+        if border:
+            points = [point + (1 - sum(point),) for point in points]
+        self._border = border
+        self._vertices = [list(point) for point in points]
+        self._mini = tuple(min(column) for column in zip(*points))
+        self._maxi = tuple(max(column) for column in zip(*points))
+        dim = len(cones[0][0])
+        self._cones = format_latte_cones(rescale_latte_cones(
+            cones, self.centers()[:dim], self.rayons()[:dim]
+        ))
+        self._volume = None
+        self._session = None
+
+    def _repr_(self):
+        return (
+            f"Polytope summary data with {len(self._vertices)} vertices, "
+            + ("cut out by the equation (-1, 1, ..., 1), " if self._border
+               else "full-dimensional, ")
+            + "given by LattE's cones"
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state["_session"] = None
+        return state
+
+    def _latte(self):
+        if self._session is None:
+            self._session = LatteIntegrateSession(self._cones)
+        return self._session
+
+    def volume(self):
+        r"""
+        Return the volume of the piece, with respect to `dx_1 \dotsm dx_d`,
+        or to `dx_1 \dotsm dx_{d-1}` if it lies on `\sum_i x_i = 1`.
+        """
+        if self._volume is None:
+            self._volume = self._latte().volume() * self.jacobian()
+        return self._volume
+
+    def integrate_rescaled(self, polynomial):
+        r"""
+        Integrate a polynomial in `t_j = (x_j - c_j) / \rho_j`, as
+        :meth:`PolytopeSummary.integrate_rescaled` does.
+        """
+        if self._border:
+            # x_d = 1 - sum_{j<d} x_j, with x_j = c_j + rho_j t_j
+            centers, rayons = self.centers(), self.rayons()
+            ring = PolynomialRing(QQ, "t", len(centers) - 1)
+            t = ring.gens()
+            last = (1 - sum(centers)
+                    - sum(rayons[j] * t[j] for j in range(len(t))))
+            polynomial = substitute_last_coordinate(polynomial, ring,
+                                                    last / rayons[-1])
+        return self._latte().integrate(polynomial) * self.jacobian()
+
+    def close(self):
+        r"""
+        Close the LattE session, if one is open.
+        """
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
 
 
 
