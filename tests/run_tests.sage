@@ -239,7 +239,8 @@ def main(argv):
     repeat = args.repeat if args.repeat is not None else (3 if args.time else 1)
     print(f"{len(names)} tests, {'serial' if args.serial else 'parallel'}"
           f"{f', median of {repeat}' if repeat > 1 else ''}\n")
-    results = run(names, repeat=repeat, serial=args.serial)
+    results = run(names, repeat=repeat, serial=args.serial,
+                  timing=bool(args.time))
     counts = summarise(results)
 
     if args.time:

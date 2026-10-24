@@ -63,7 +63,9 @@ sage tests/run_tests.sage --long --time after.json --compare before.json
 
 `--time` writes the wall-clock time of every test that ran, with the commit,
 the date and the machine; `--repeat N` (3 by default with `--time`) keeps the
-median of N runs. `--compare` prints a before/after table with the ratios,
+median of N runs. Before each run of a test, the cached example values are
+dropped, so that each test pays for its own: a timed run takes longer than an
+untimed one. `--compare` prints a before/after table with the ratios,
 leaving out the tests skipped on either side.
 `--serial` replaces the library's pool of workers by an in-process map: a
 serial time is only comparable with another serial time.
