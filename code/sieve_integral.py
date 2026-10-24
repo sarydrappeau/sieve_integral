@@ -3047,7 +3047,7 @@ def balanced_polytope_integrate_polyratio(
                     exponents[denom_idx], exponents[dim] = n, k
                     terms[tuple(exponents)] = coeff
         poly1_compose = big_ring(terms)
-        t = big_ring.gens()
+        t = ring.gens()
         z_image = ((centers[numer_idx] - midpt * centers[denom_idx])
                    + rayons[numer_idx] * t[numer_idx]
                    - midpt * rayons[denom_idx] * t[denom_idx]) / Z
@@ -3086,10 +3086,11 @@ def balanced_polytope_integrate_polyratio(
                 if degree <= dmax),
                big_ring.zero())
     if z_image is not None:
-        # z is replaced within big_ring, then its exponent, now 0, dropped.
-        kept = kept.subs({big_ring.gen(dim): z_image})
-    polynomial_latte = ring({tuple(e)[:-1]: coeff
-                             for e, coeff in kept.dict().items()})
+        polynomial_latte = substitute_last_coordinate(kept, ring, z_image)
+    else:
+        # kept has no z: only its exponent, 0, is dropped.
+        polynomial_latte = ring({tuple(e)[:-1]: coeff
+                                 for e, coeff in kept.dict().items()})
     if polynomial_latte.is_zero():
         # Everything was dropped, and charged.
         valeur = 0
