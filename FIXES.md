@@ -135,7 +135,11 @@ not a timing run), nearly all of it in the self-consistency tests, 20 bits above
 each example's precision. Eliminating the last coordinate by Horner's rule
 rather than by `subs` (`substitute_last_coordinate`, called by
 `latte_integrate`) brings it down to 5452s, LattE receiving the same
-polynomials.
+polynomials. That helper applied Horner's rule through a ring homomorphism
+(`change_ring`). It now groups the terms by their exponent of the last
+coordinate instead, and the Buchstab chain substitutes its variable `z` through
+it rather than by `subs`: over the same 328 tests (the split engine and its
+tests came in between), the suite takes 3938s against 5481s.
 
 ### Left for later
 

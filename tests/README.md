@@ -6,7 +6,7 @@ the repository root.**
 
 ```
 sage tests/run_tests.sage                  # the quick tests, under a minute
-sage tests/run_tests.sage --long           # everything, about an hour and a half
+sage tests/run_tests.sage --long           # everything, about an hour
 sage tests/run_tests.sage --only-timing    # the micro-benchmarks
 sage tests/run_tests.sage 'regression/chen*' 'closedform/*'   # globs on names
 sage tests/run_tests.sage --long --list    # print the selected names, run nothing
