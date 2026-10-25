@@ -359,31 +359,51 @@ def are_inequalities_compatible(ieqs, border = False):
         sage: ieqs = [(-1/2, 1, 0, 0), (-1/2, 0, 1, 0), (-1/2, 0, 0, 1)]
         sage: are_inequalities_compatible(ieqs, border = True)
         False
+
+    Tall coefficients defeat the floating-point solver. Here
+    `x_1 \geq 11367467267564/52064735576629`, `x_1 \geq x_2` and
+    `x_2 \geq 481/2000`, which GLPK (floating-point) rejects although
+    `x_1 = x_2 = 481/2000` is a solution::
+
+        sage: ieqs = [(-11367467267564/52064735576629, 1, 0),
+        ....:         (0, 1, -1),
+        ....:         (-481/2000, 0, 1)]
+        sage: are_inequalities_compatible(ieqs)
+        True
     """
 
     if not ieqs:
         return True
 
     dim = len(ieqs[0]) - 1
-    lin_prog = MixedIntegerLinearProgram()
-    x = lin_prog.new_variable(real = True)
-    if border:
-        lin_prog.add_constraint(
-            sum(x[j] for j in range(1, dim+1)) == 1
-        )
     for ieq in ieqs:
         if len(ieq) != dim + 1:
             raise ValueError("The length of the inequalities "
                              "provided are inconsistent")
-        lin_prog.add_constraint(
-            ieq[0] + sum(x[j] * ieq[j] for j in range(1, dim+1)) >= 0
-        )
-    lin_prog.set_objective(None)
-    try:
-        lin_prog.solve(objective_only = True)
-        return True
-    except MIPSolverException:
-        return False
+
+    def has_solution(solver):
+        lin_prog = MixedIntegerLinearProgram(solver = solver)
+        x = lin_prog.new_variable(real = True)
+        if border:
+            lin_prog.add_constraint(
+                sum(x[j] for j in range(1, dim+1)) == 1
+            )
+        for ieq in ieqs:
+            lin_prog.add_constraint(
+                ieq[0] + sum(x[j] * ieq[j] for j in range(1, dim+1)) >= 0
+            )
+        lin_prog.set_objective(None)
+        try:
+            lin_prog.solve(objective_only = True)
+            return True
+        except MIPSolverException:
+            return False
+
+    # The floating point solver might reject a system that has
+    # solutions; a rejection is therefore confirmed with the exact PPL
+    # solver.
+
+    return has_solution(None) or has_solution("PPL")
 
 
 def polytope_if_dim(ieqs, dim, border):

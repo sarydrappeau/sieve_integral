@@ -6,7 +6,7 @@ row per finding, with the evidence that established it. The two modules of
 
 Everything below was checked against SageMath 10.7 and LattE 1.7.6, and
 `cd code && sage -t --long number_theoretic_dde_solutions.py sieve_integral.py`
-passes, with 57 and 174 tests.
+passes, with 57 and 176 tests.
 
 ## `code/number_theoretic_dde_solutions.py`
 
@@ -53,8 +53,8 @@ repository consumes it.
 
 ## `code/sieve_integral.py`
 
-Step 7 of the reorganisation. The first six rows are the ones that could make
-the returned ball miss the true value.
+Rows 1 to 15 come from step 7 of the reorganisation, row 16 from step 9. Rows 1
+to 6 and 16 are the ones that could make the returned ball miss the true value.
 
 | # | Issue | Evidence | Resolution |
 | --- | --- | --- | --- |
@@ -73,6 +73,7 @@ the returned ball miss the true value.
 | 13 | `sage -t code/sieve_integral.py` aborted while *parsing*, so not one example had ever run | `ValueError: line 56 of the docstring for sieve_integral.PolytopeSummary has inconsistent leading whitespace`; behind it, continuation lines without `....:`, exception examples written as IPython sessions, symbolic examples with no `var()`, an example stopping mid-sentence, and a name the docstring never defined | 174 doctests, with `# optional - latte_int` on the blocks that need LattE |
 | 14 | the file was a script, not a module: `load("number_theoretic_dde_solutions.py")` at top level, `SageObject` never imported, and `round` taken from the session | in a bare Python process `round(RealNumber, 3)` raises `type RealNumber doesn't define __round__`, the Sage session's `round` being `sage.misc.functional.round` | a module docstring, the GPL header, explicit imports, and the companion imported when it is on `sys.path` and `load`ed otherwise |
 | 15 | `facteur` was a parameter of `sieve_integral` but hard-coded to 1.3 inside `sieve_integral_polyratio`, so the Buchstab chain ignored it; `NUM_PROCESSORS` was a hard-coded 7; the objective of the feasibility LP was set once per inequality; both workers unpacked a flag they do not use; and `sieve_integral_polyratio` measured its polytope without naming the engine | — | `facteur` and `processes` threaded through, `NUM_PROCESSORS = max(1, (os.cpu_count() or 2) - 1)`, one `sum_over_pieces` helper for the two mappings, and the rest cleaned |
+| 16 | `are_inequalities_compatible` asked GLPK alone, which works in floating point and answers *infeasible* on some systems with tall coefficients that do have solutions; the pile loop of `balance_polytope` then dropped the cell, which was neither integrated nor charged as error | `x_1 ≥ 11367467267564/52064735576629` (that is `QQ(0.655/3)`, from the Stadlmann transcription), `x_1 ≥ x_2`, `x_2 ≥ 481/2000` is rejected, although `x_1 = x_2 = 481/2000` solves it; over the 80 examples and the three h anchors, 2 of the 19521 calls are wrong, both in `stadlmann/02` | GLPK's "feasible" is returned as it is, its "infeasible" confirmed with `solver="PPL"`; a false "feasible" is harmless, every caller ending in the exact `Polyhedron` of `polytope_if_dim` |
 
 ### Effect on the recorded values
 
@@ -108,6 +109,12 @@ by 13% and 11%. The micro-benchmarks, which cover the plain chain and the
 differential-delay solutions rather than the Buchstab chain, do not move: 7.53s
 against 7.39s, a ratio of 0.98.
 
+Row 16 moves `stadlmann/02` alone, from `[0.11328 +/- 6.92e-6]` to
+`[0.1221 +/- 3.10e-5]`; the h anchors do not move. PPL now runs on the 6319
+rejections, which costs 1.1% on the long suite, 2195s against 2172s in a paired
+run. Nearly all of it is `h/0.45-0.5`, from 6.2s to 19.7s, where
+`polytope_if_dim` rejects 4238 of its 4582 calls, none of them wrongly.
+
 ### Left for later
 
 * `Computation of h/computation_of_h.sage` has the same defect as row 5 in its
@@ -122,8 +129,10 @@ against 7.39s, a ratio of 0.98.
   library's, and cannot be until `sieve_integral` can express a product of
   interval-wise polynomials composed with affine forms -- the entry `TODO.md`
   now carries.
-* `stadlmann/02` is still the floating-point LP above, which step 9 decides
-  exactly.
+* In `polytope_if_dim` the LP, and since row 16 its PPL confirmation, come just
+  before an exact `Polyhedron` whose dimension is read anyway, so there they are
+  redundant. Its PPL calls take 20.9s of the 26.1s that row 16 adds; whether
+  building the `Polyhedron` straight away is cheaper has not been measured.
 
 ## Traps worth remembering
 
