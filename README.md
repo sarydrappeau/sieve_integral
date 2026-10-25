@@ -54,6 +54,7 @@ See the README.md file for more information about those.
 
 * Requires Sage and LattE (see [Installing](#installing)).
 * It was designed with Sage 10.7 and LattE 1.7.6. It may well work with earlier versions. Please report any incompatibility issue you witness.
+* Optionally, a modified LattE, which cuts the polytopes into pieces itself (see [The hyperplane-split engine](#the-hyperplane-split-engine)).
 
 ### Installing
 
@@ -75,6 +76,33 @@ conda activate sieve-integral
 load("sieve_integral.py")
 ```
 This loads the script's functions, including ``sieve_integral`` and ``sieve_integral_harman``, into your notebook namespace.
+
+### The hyperplane-split engine
+
+Before integrating, ``sieve_integral`` and ``sieve_integral_harman`` cut the polytope into pieces on which every coordinate varies by a bounded ratio.
+Their argument ``engine`` chooses what does the cutting:
+
+- ``"split"``: LattE's ``hyperplane-split`` cuts the polytope, and one ``integrate`` process per piece computes its volume and its integrals. This needs the modified LattE of the branch ``feature/hyperplane-split`` of [sarydrappeau/latte](https://github.com/sarydrappeau/latte).
+- ``"sage"``: Sage cuts the polytope, and the released LattE integrates on each piece.
+- ``None``, the default: ``"split"`` when the modified LattE is found, ``"sage"`` otherwise.
+
+Both engines return rigorous enclosures of the same integral.
+
+The modified LattE is built as LattE is (see its ``README`` for the libraries it needs), preferably in a prefix of its own:
+```
+git clone -b feature/hyperplane-split https://github.com/sarydrappeau/latte.git
+cd latte
+./autogen.sh
+./configure --prefix=$HOME/.local/opt/latte-hyperplane-split
+make && make install
+```
+``hyperplane-split`` is looked for in the directory named by the environment variable ``SIEVE_LATTE_BIN`` if it is set, and on ``PATH`` otherwise. So either
+```
+export SIEVE_LATTE_BIN=$HOME/.local/opt/latte-hyperplane-split/bin
+```
+or link ``hyperplane-split`` into a directory on ``PATH``, such as ``~/.local/bin``.
+The ``integrate`` used with it is the one in the same directory, symbolic links resolved, so that directory itself need not be on ``PATH``.
+``latte_toolchain()`` returns the two programs found, or ``None``; its answer is cached, and ``latte_toolchain.cache_clear()`` forgets it.
 
 ## Help
 

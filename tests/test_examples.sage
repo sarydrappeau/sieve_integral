@@ -17,6 +17,10 @@ Three kinds of check, in increasing order of what they would catch:
    outputs the h notebook has stored, and the upper bounds Stadlmann's paper
    gives for its polytopes.
 
+Besides, the **engine** tests check that the two engines of
+``balance_polytope``, LattE's ``hyperplane-split`` and Sage's slicing, give
+overlapping values. They are skipped where LattE's programs are not found.
+
 The acceptance criterion throughout is that the result is an enclosure, never
 that it repeats a previous value bit for bit.
 """
@@ -66,6 +70,20 @@ def self_consistency_test(name):
             f"{name} = {coarse} at its own precision does not overlap "
             f"{fine} at ten bits more: one of the two error terms is "
             f"accounted for too optimistically")
+    return test
+
+
+def engine_agreement_test(name):
+    def test():
+        if library_namespace()["latte_toolchain"]() is None:
+            raise SkipTest("LattE's hyperplane-split was not found")
+        # The default is then the split engine: a regression test on the same
+        # example reuses this value.
+        split = example_value(name)
+        sage = example_value(name, engine="sage")
+        assert split.overlaps(sage), (
+            f"{name} = {split} with the split engine does not overlap "
+            f"{sage} with the Sage engine: one of the two is not an enclosure")
     return test
 
 
@@ -186,6 +204,8 @@ for _name in example_names():
     TESTS[f"regression/{_name}"] = (regression_test(_name), _tags)
     if _name not in NO_SELF_CONSISTENCY:
         TESTS[f"selfconsistency/{_name}"] = (self_consistency_test(_name), ("long",))
+    if not is_h_example(_name):
+        TESTS[f"engine/{_name}"] = (engine_agreement_test(_name), _tags)
 
 for _j in range(len(examples_namespace()["STADLMANN_BOUNDS"])):
     _tags = ("quick",) if f"stadlmann/{_j:02d}" in QUICK_EXAMPLES else ("long",)

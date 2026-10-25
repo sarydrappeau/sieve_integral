@@ -80,8 +80,13 @@ wrote its doctests.
 #                  https://www.gnu.org/licenses/
 # ****************************************************************************
 
+import json
 import os
-from functools import partial
+import shutil
+import subprocess
+import tempfile
+from contextlib import nullcontext
+from functools import lru_cache, partial
 from multiprocessing import Pool as pool
 from operator import le, ge, lt, gt, eq
 # Sage as a whole first: in a bare Python process, importing one of its
@@ -89,9 +94,12 @@ from operator import le, ge, lt, gt, eq
 import sage.all  # noqa: F401
 from sage.structure.sage_object import SageObject
 from sage.rings.real_arb import RealBallField
+from sage.rings.integer_ring import ZZ
 from sage.rings.rational_field import QQ
 from sage.rings.real_mpfr import RealField, RR
 from sage.functions.other import binomial
+from sage.arith.functions import lcm
+from sage.arith.misc import gcd
 from sage.misc.functional import round
 from sage.numerical.mip import (MixedIntegerLinearProgram,
                                 MIPSolverException)
@@ -102,6 +110,7 @@ from sage.combinat.integer_vector import IntegerVectors
 from sage.misc.misc_c import prod
 from sage.geometry.polyhedron.constructor import Polyhedron
 from sage.geometry.polyhedron.base import Polyhedron_base
+from sage.interfaces.latte import to_latte_polynomial
 from sage.symbolic.expression import Expression
 from tqdm import tqdm
 
@@ -750,6 +759,404 @@ def latte_integrate(polytope, polynomial = None):
                                   algorithm = 'cone-decompose')
 
 
+@lru_cache(maxsize = None)
+def latte_toolchain():
+    r"""
+    Return the absolute paths of LattE's ``hyperplane-split`` and of the
+    ``integrate`` next to it, or ``None`` if they are not found.
+
+    ``hyperplane-split`` is looked for in the directory named by the
+    environment variable ``SIEVE_LATTE_BIN`` if it is set, and on ``PATH``
+    otherwise. ``integrate`` is taken from the directory of
+    ``hyperplane-split``, symbolic links resolved, and not from ``PATH``,
+    where Sage's own comes first. It must know
+    ``--interactive-integrands``: the released ``integrate`` ignores
+    options it does not know, and a session would wait forever.
+
+    The answer is cached (since it's going to be called many times),
+    ``latte_toolchain.cache_clear()`` forgets it.
+
+    EXAMPLES::
+
+        sage: toolchain = latte_toolchain()
+        sage: toolchain is None or all(os.path.isabs(p) for p in toolchain)
+        True
+    """
+    splitter = shutil.which("hyperplane-split",
+                            path = os.environ.get("SIEVE_LATTE_BIN") or None)
+    if splitter is None:
+        return None
+    splitter = os.path.realpath(splitter)
+    integrator = os.path.join(os.path.dirname(splitter), "integrate")
+    try:
+        usage = subprocess.run([integrator, "--help"],
+                               stdin = subprocess.DEVNULL,
+                               capture_output = True,
+                               text = True,
+                               timeout = 60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if "--interactive-integrands" not in usage.stdout + usage.stderr:
+        return None
+    return (splitter, integrator)
+
+
+def latte_hrep(ieqs):
+    r"""
+    Return a system of inequalities in LattE's format, each row scaled
+    to integers.
+
+    INPUT:
+
+    - ``ieqs`` -- a non-empty list of inequalities `b + Ax \geq 0` in the
+    shape ``(b, A)``.
+
+    OUTPUT: a string.
+
+    EXAMPLES::
+
+        sage: print(latte_hrep([(-2/5, 1), (3/5, -1)]))
+        2 2
+        -2 5
+        3 -5
+        <BLANKLINE>
+    """
+    rows = []
+    for ieq in ieqs:
+        row = [QQ(entry) for entry in ieq]
+        denominator = lcm([entry.denominator() for entry in row])
+        rows.append(" ".join(str(entry * denominator) for entry in row))
+    return f"{len(rows)} {len(ieqs[0])}\n" + "\n".join(rows) + "\n"
+
+
+def latte_split(ieqs, cuts):
+    r"""
+    Cut a polytope along hyperplanes `x_j = a` with LattE's
+    ``hyperplane-split``, and return the vertex cones of the pieces.
+
+    INPUT:
+
+    - ``ieqs`` -- the inequalities `b + Ax \geq 0` of a full-dimensional
+    polytope, in the shape ``(b, A)``.
+
+    - ``cuts`` -- a non-empty list of pairs ``(j, a)``, `j` counted from
+    0 and `a` rational.
+
+    OUTPUT: a list holding, for each piece of positive volume, its cone
+    file as a string. Each vertex cone is triangulated
+    (``--simplicial-cones``), so the determinants are those of the
+    simplicial cones.
+
+    EXAMPLES:
+
+    The square `[1, 2]^2`, cut along `x_1 = 3/2`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: pieces = latte_split(ieqs, [(0, 3/2)])
+        sage: len(pieces)
+        2
+        sage: pieces[0].splitlines()[:3]
+        ['LattE cone file.', 'Format version: 1', 'Ambient dimension: 2']
+    """
+    toolchain = latte_toolchain()
+    if toolchain is None:
+        raise RuntimeError("LattE's hyperplane-split was not found; "
+                           "see latte_toolchain")
+    with tempfile.TemporaryDirectory(prefix = "sieve-split-") as directory:
+        with open(os.path.join(directory, "polytope.hrep"), "w") as f:
+            f.write(latte_hrep(ieqs))
+        # cdd, which LattE calls, writes its files to the current directory
+        completed = subprocess.run(
+            [toolchain[0], "--simplicial-cones"]
+            + [f"--cut={j + 1},{QQ(a)}" for j, a in cuts]
+            + ["--output-dir=pieces", "polytope.hrep"],
+            cwd = directory, stdin = subprocess.DEVNULL,
+            capture_output = True, text = True
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("hyperplane-split failed with exit code "
+                               f"{completed.returncode}:\n"
+                               f"{completed.stderr[-2000:]}")
+        pieces = os.path.join(directory, "pieces")
+        with open(os.path.join(pieces, "manifest.json")) as f:
+            manifest = json.load(f)
+        cones = []
+        for piece in manifest["pieces"]:
+            with open(os.path.join(pieces, piece["file"])) as f:
+                cones.append(f.read())
+    return cones
+
+
+class LatteIntegrateSession:
+    r"""
+    One process of LattE's ``integrate --interactive-integrands``, which
+    answers the volume of a polytope, given by its vertex cones, and the
+    integrals of polynomials over it.
+
+    INPUT:
+
+    - ``cones`` -- a cone file, as a string.
+
+    EXAMPLES::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: pieces = latte_split(ieqs, [(0, 3/2)])
+        sage: R.<x1, x2> = QQ[]
+        sage: with LatteIntegrateSession(pieces[0]) as session:
+        ....:     print(session.volume(), session.integrate(x1),
+        ....:           session.integrate(R.zero()))
+        1/2 5/8 0
+        sage: S.<y1, y2, y3> = QQ[]
+        sage: with LatteIntegrateSession(pieces[0]) as session:
+        ....:     session.integrate(y1)
+        Traceback (most recent call last):
+        ...
+        ValueError: the polynomial has 3 variables, and the polytope 2
+    """
+
+    def __init__(self, cones):
+        self._process = None
+        self._directory = None
+        toolchain = latte_toolchain()
+        if toolchain is None:
+            raise RuntimeError("LattE's hyperplane-split and integrate were "
+                               "not found; see latte_toolchain")
+        header = "Ambient dimension:"
+        start = cones.index(header) + len(header)
+        self._dimension = int(cones[start:cones.index("\n", start)])
+        self._directory = tempfile.mkdtemp(prefix = "sieve-integrate-")
+        with open(os.path.join(self._directory, "piece.cones"), "w") as f:
+            f.write(cones)
+        # cdd, which LattE calls, writes its files to the current directory
+        self._process = subprocess.Popen(
+            [toolchain[1], "--interactive-integrands", "--valuation=integrate",
+             "--cone-decompose", "--monomials=unused",
+             "--input-vertex-cones=piece.cones"],
+            cwd = self._directory,
+            stdin = subprocess.PIPE,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.DEVNULL,
+            text = True
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass  # at interpreter exit, the modules close needs may be gone
+
+    def _ask(self, line):
+        if self._process is None:
+            raise RuntimeError("the LattE session is closed")
+        try:
+            self._process.stdin.write(line + "\n")
+            self._process.stdin.flush()
+        except BrokenPipeError:
+            pass  # the process has died; reading below says so
+        while True:
+            reply = self._process.stdout.readline()
+            if not reply:
+                self.close()
+                raise RuntimeError("LattE's integrate ended without "
+                                   f"answering {line[:200]}")
+            if reply.startswith("ANSWER:"):
+                return QQ(reply[len("ANSWER:"):].strip())
+            if reply.startswith("ERROR:"):
+                raise RuntimeError("LattE's integrate: "
+                                   + reply[len("ERROR:"):].strip())
+            # Only one line of the output interests us, but LattE might
+            # also output lines about the progress of the computation.
+
+    def volume(self):
+        r"""
+        Return the volume of the polytope.
+        """
+        return self._ask("volume")
+
+    def integrate(self, polynomial):
+        r"""
+        Return the integral over the polytope of ``polynomial``, a
+        polynomial over ``QQ`` in as many variables as the polytope has
+        coordinates. To prevent unreliable answers from LattE, we check
+        dimension match and the zero polynomial.
+        """
+        if polynomial.parent().ngens() != self._dimension:
+            raise ValueError(f"the polynomial has "
+                             f"{polynomial.parent().ngens()} variables, and "
+                             f"the polytope {self._dimension}")
+        if polynomial.is_zero():
+            return QQ.zero()
+        return self._ask(to_latte_polynomial(polynomial))
+
+    def close(self):
+        r"""
+        End the process and remove its files; closing twice is harmless.
+        """
+        process, self._process = self._process, None
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.stdin.write("quit\n")
+                process.stdin.close()
+                process.wait(timeout = 60)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait()
+            process.stdout.close()
+        directory, self._directory = self._directory, None
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors = True)
+
+
+def parse_latte_cones(text):
+    r"""
+    Return the cones of a cone file, as triples ``(vertex, rays,
+    determinant)``: a tuple of rationals, a tuple of tuples of integers,
+    and an integer, ``0`` meaning not computed. The other fields of the
+    file are not read.
+
+    EXAMPLES::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: sorted(parse_latte_cones(latte_split(ieqs, [(0, 5/4)])[0]))
+        [((1, 1), ((0, 1), (1, 0)), -1),
+         ((1, 2), ((0, -1), (1, 0)), 1),
+         ((5/4, 1), ((-1, 0), (0, 1)), -1),
+         ((5/4, 2), ((-1, 0), (0, -1)), 1)]
+    """
+    def vector(line, ring):
+        entries = line[line.index("[") + 1:line.index("]")].split()
+        return tuple(ring(entry) for entry in entries)
+
+    cones = []
+    lines = iter(text.splitlines())
+    for line in lines:
+        if not line.startswith("Vertex:"):
+            continue
+        vertex = vector(line, QQ)
+        next(lines)  # Extreme rays:
+        rays = []
+        line = next(lines)
+        while line.startswith("["):
+            rays.append(vector(line, ZZ))
+            line = next(lines)
+        cones.append((vertex, tuple(rays), ZZ(line[len("Determinant:"):])))
+    return cones
+
+
+def format_latte_cones(cones):
+    r"""
+    Return a cone file holding ``cones``, triples as
+    :func:`parse_latte_cones` returns them. The facets are written empty,
+    and the dual determinant ``0``.
+
+    EXAMPLES::
+
+        sage: cones = [((-1, 1/3), ((1, 0), (0, -1)), -1)]
+        sage: print(format_latte_cones(cones))
+        LattE cone file.
+        Format version: 1
+        Ambient dimension: 2
+        Homogenized: 0
+        Dualized: 0
+        Unbounded: 0
+        ==========
+        Cone.
+        Coefficient: 1
+        Vertex: [-1 1/3]
+        Extreme rays:
+        [1 0]
+        [0 -1]
+        Determinant:-1
+        Facets:
+        []
+        Dual determinant:0
+        Lattice points in parallelepiped:
+        []
+        ==========
+        <BLANKLINE>
+        sage: parse_latte_cones(format_latte_cones(cones)) == cones
+        True
+    """
+    def vector(entries):
+        return "[" + " ".join(str(entry) for entry in entries) + "]"
+
+    header = ["LattE cone file.",
+              "Format version: 1",
+              f"Ambient dimension: {len(cones[0][0])}",
+              "Homogenized: 0",
+              "Dualized: 0",
+              "Unbounded: 0"]
+    blocks = []
+    for vertex, rays, determinant in cones:
+        blocks.append("\n".join(
+            ["==========", "Cone.", "Coefficient: 1",
+             "Vertex: " + vector(vertex), "Extreme rays:"]
+            + [vector(ray) for ray in rays]
+            + [f"Determinant:{determinant}", "Facets:", "[]",
+               "Dual determinant:0", "Lattice points in parallelepiped:",
+               "[]", "=========="]
+        ))
+    return "\n".join(header) + "\n" + "\n\n".join(blocks) + "\n"
+
+
+def rescale_latte_cones(cones, centers, rayons):
+    r"""
+    Return the image of ``cones`` under `t_j = (x_j - c_j) / \rho_j`,
+    for the centres `c` and the half-widths `\rho > 0`.
+
+    The rays are made primitive again, which multiplies the image of ray
+    `i` by some `\lambda_i > 0`: the determinant is multiplied by
+    `\prod_i \lambda_i / \prod_j \rho_j`, and ``0`` stays ``0``.
+
+    EXAMPLES:
+
+    Under `\rho = (1/2, 1/3)` the rays `(1, 1)` and `(1, 0)` become
+    `(2, 3)` and `(2, 0)`, made primitive into `(1, 0)`, so the
+    determinant is `-3`, not `-6`::
+
+        sage: rescale_latte_cones([((1, 1), ((1, 1), (1, 0)), -1)],
+        ....:                     (1, 0), (1/2, 1/3))
+        [((0, 3), ((2, 3), (1, 0)), -3)]
+
+    The determinants are those of the rescaled rays::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (-1, 0, 1), (6, -1, -2)]
+        sage: cones = parse_latte_cones(latte_split(ieqs, [(0, 2)])[1])
+        sage: sorted(set(vertex for vertex, _, _ in cones))
+        [(2, 1), (2, 2), (4, 1)]
+        sage: rescaled = rescale_latte_cones(cones, (3, 3/2), (1, 1/2))
+        sage: all(matrix(rays).det() == determinant
+        ....:     for _, rays, determinant in rescaled)
+        True
+    """
+    jacobian = prod(rayons)
+    rescaled = []
+    for vertex, rays, determinant in cones:
+        vertex = tuple((x - c) / rho
+                       for x, c, rho in zip(vertex, centers, rayons))
+        images = []
+        for ray in rays:
+            image = [QQ(entry) / rho for entry, rho in zip(ray, rayons)]
+            multiplier = lcm([entry.denominator() for entry in image])
+            image = [ZZ(entry * multiplier) for entry in image]
+            divisor = gcd(image)
+            images.append(tuple(entry // divisor for entry in image))
+            determinant *= multiplier / divisor
+        rescaled.append((vertex, tuple(images), ZZ(determinant / jacobian)))
+    return rescaled
+
+
 
 class PolytopeSummary(SageObject):
     r"""
@@ -775,13 +1182,14 @@ class PolytopeSummary(SageObject):
     EXAMPLES::
 
         sage: # optional - latte_int
-        sage: polytope = polytopes.hypercube(3); polytope
+        sage: polytope = polytopes.hypercube(3) + vector((3, 3, 3)); polytope
         A 3-dimensional polyhedron in ZZ^3 defined as the convex hull of 8 vertices
         sage: summary = PolytopeSummary(polytope); summary
         Polytope summary data with 6 inequalities, full-dimensional, and volume 8
-        sage: ieqs, border, mini, maxi, volume = summary.unpack()
-        sage: border, mini, maxi, volume
-        (False, (-1, -1, -1), (1, 1, 1), 8)
+        sage: summary.border(), summary.bounding_box(), summary.volume()
+        (False, ((2, 2, 2), (4, 4, 4)), 8)
+        sage: summary.centers(), summary.rayons(), summary.ratios()
+        ((3, 3, 3), (1, 1, 1), (1/3, 1/3, 1/3))
 
     On the hyperplane `\sum_i x_i = 1` the volume is the one induced on
     that hyperplane, and ``border`` is ``True``::
@@ -790,8 +1198,10 @@ class PolytopeSummary(SageObject):
         sage: summary = PolytopeSummary(polytopes.simplex(2)); summary
         Polytope summary data with 3 inequalities, cut out by the equation
         (-1, 1, ..., 1), and volume 1/2
-        sage: summary.unpack()
-        ([[1, 0, -1, -1], [0, 0, 1, 0], [0, 0, 0, 1]], True, (0, 0, 0), (1, 1, 1), 1/2)
+        sage: summary.border(), summary.bounding_box(), summary.volume()
+        (True, ((0, 0, 0), (1, 1, 1)), 1/2)
+        sage: summary.vertices()
+        [[0, 0, 1], [0, 1, 0], [1, 0, 0]]
 
     Any other polytope is rejected::
 
@@ -823,6 +1233,7 @@ class PolytopeSummary(SageObject):
             )
         self._border = (len(polytope.equations_list()) == 1)
         self._ieqs = polytope.inequalities_list()
+        self._vertices = polytope.vertices_list()
         self._mini, self._maxi = polytope.bounding_box()
         self._volume = polytope.volume(engine = 'latte',
                                        algorithm = 'cone-decompose',
@@ -837,36 +1248,261 @@ class PolytopeSummary(SageObject):
             + f"and volume {self._volume}"
         )
 
+    def border(self):
+        r"""
+        Return whether the polytope is cut out by `\sum_i x_i = 1`.
+        """
+        return self._border
+
+    def bounding_box(self):
+        r"""
+        Return the pair ``(mini, maxi)`` of tuples bounding the polytope.
+        """
+        return (self._mini, self._maxi)
+
+    def vertices(self):
+        r"""
+        Return the vertices of the polytope, as a list of lists.
+        """
+        return self._vertices
+
     def volume(self):
+        r"""
+        Return the volume of the polytope, with respect to
+        `dx_1 \dotsm dx_d`, or to `dx_1 \dotsm dx_{d-1}` if it is cut out
+        by `\sum_i x_i = 1`.
+        """
         return self._volume
 
-    def unpack(self):
+    def centers(self):
         r"""
-        Return all the data contained in this polytope summary.
+        Return the centre `c` of the bounding box.
+        """
+        return tuple((low + high) / 2
+                     for low, high in zip(self._mini, self._maxi))
 
-        OUTPUT:
+    def rayons(self):
+        r"""
+        Return the half-widths `\rho` of the bounding box.
+        """
+        return tuple((high - low) / 2
+                     for low, high in zip(self._mini, self._maxi))
 
-        - ``ieqs`` -- the original polytope's inequalities.
+    def ratios(self):
+        r"""
+        Return the ratios `\rho_j / c_j` of the half-widths to the centre.
+        """
+        return tuple(rayon / center
+                     for rayon, center in zip(self.rayons(), self.centers()))
 
-        - ``border`` -- whether the polytope is cut out
-        by the equation `\sum_i x_i = 1`.
+    def jacobian(self):
+        r"""
+        Return `\prod_j \rho_j`, which turns `dt` into the measure of
+        :meth:`volume`: the product is over `j < d` if the polytope is cut
+        out by `\sum_i x_i = 1`.
+        """
+        rayons = self.rayons()
+        return prod(rayons[:-1]) if self._border else prod(rayons)
 
-        - ``mini`` -- the lower coordinates of a bounding box, as a tuple.
-        
-        - ``maxi`` -- the upper coordinates of a bounding box, as a tuple.
+    def integrate_rescaled(self, polynomial):
+        r"""
+        Integrate a polynomial in the rescaled coordinates
+        `t_j = (x_j - c_j) / \rho_j`, which lie in `[-1, 1]` on the
+        polytope.
 
-        - ``volume`` -- the polytope's volume, either as a full-dimensional
-        polytope (if ``border`` is ``False``) or else projected onto any
-        ``d-1`` of the coordinates (if ``border`` is ``True``, with ``d``
-        the dimension of the polytope).
+        INPUT:
 
+        - ``polynomial`` -- a polynomial over ``QQ`` in `d` variables.
+
+        OUTPUT: the integral over the polytope of ``polynomial`` evaluated
+        at `t`, with respect to the measure of :meth:`volume`.
+
+        EXAMPLES:
+
+        On `[1, 3/2] \times [1, 2]`, where `t_1 = 4 x_1 - 5`, the
+        integral of `t_1^2` is a third of the area::
+
+            sage: # optional - latte_int
+            sage: polytope = Polyhedron(ieqs = [(-1, 1, 0), (3/2, -1, 0),
+            ....:                               (-1, 0, 1), (2, 0, -1)])
+            sage: R.<t1, t2> = QQ[]
+            sage: PolytopeSummary(polytope).integrate_rescaled(t1^2)
+            1/6
+
+        On the segment `x_1 + x_2 = 1`, `2/5 \leq x_1 \leq 3/5`, where
+        `t_2 = -t_1`, with respect to `dx_1`::
+
+            sage: # optional - latte_int
+            sage: polytope = Polyhedron(eqns = [eqn_sum_one(2)],
+            ....:                       ieqs = [(-2/5, 1, 0), (-2/5, 0, 1)])
+            sage: PolytopeSummary(polytope).integrate_rescaled(t1 * t2)
+            -1/15
+        """
+        centers, rayons = self.centers(), self.rayons()
+        polytope = Polyhedron(
+            ieqs = self._ieqs,
+            eqns = [eqn_sum_one(len(centers))] if self._border else [],
+            base_ring = QQ
+        )
+        translated_polytope = (
+            polytope
+            .translation(-c for c in centers)
+            .linear_transformation(
+                diagonal_matrix(1/ray for ray in rayons)
+            )
+        )
+        return latte_integrate(translated_polytope, polynomial) * self.jacobian()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def close(self):
+        r"""
+        Release the processes the summary holds: none here, a LattE
+        session for a :class:`SplitPieceSummary`.
         """
 
-        return (self._ieqs, 
-                self._border,
-                self._mini,
-                self._maxi,
-                self._volume)
+
+class SplitPieceSummary(PolytopeSummary):
+    r"""
+    The summary of a piece written by LattE's ``hyperplane-split``,
+    given by its vertex cones. It implements two methods to compute
+    volumes and integrals on this piece.  Inside a ``with`` block, one
+    LattE interactive session answers every question; outside, each
+    question opens a session of its own.  The __getstate__ method is
+    there to prevent two pieces using the same session.
+
+    If the piece lies on `\sum_i x_i = 1`, the cones are those of its
+    image after the elimination of `x_d`.
+
+    INPUT:
+
+    - ``cones`` -- a cone file, as a string.
+
+    - ``border`` -- whether the piece lies on `\sum_i x_i = 1`.
+
+    EXAMPLES:
+
+    A piece of `[1, 2]^2`, on which `t_1 = 8 x_1 - 9` and
+    `t_2 = 2 x_2 - 3`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1, 1, 0), (2, -1, 0), (-1, 0, 1), (2, 0, -1)]
+        sage: piece = SplitPieceSummary(latte_split(ieqs, [(0, 5/4)])[0],
+        ....:                           False)
+        sage: piece
+        Polytope summary data with 4 vertices, full-dimensional, given
+        by LattE's cones
+        sage: piece.bounding_box(), piece.volume()
+        (((1, 1), (5/4, 2)), 1/4)
+        sage: R.<t1, t2> = QQ[]
+        sage: p = t1^2 * t2 - 3*t2^2 + 1/2
+        sage: piece.integrate_rescaled(p)
+        -1/8
+        sage: x1, x2 = var("x1, x2")
+        sage: integrate(integrate(p(8*x1 - 9, 2*x2 - 3), x1, 1, 5/4),
+        ....:           x2, 1, 2)
+        -1/8
+
+    On `\sum_i x_i = 1`, with `x_1, x_2, x_3 \geq 1/5`, cut at
+    `x_1 = 2/5`; the cones are those of the image on `(x_1, x_2)`::
+
+        sage: # optional - latte_split
+        sage: ieqs = [(-1/5, 1, 0), (-1/5, 0, 1), (4/5, -1, -1)]
+        sage: T.<t1, t2, t3> = QQ[]
+        sage: with SplitPieceSummary(latte_split(ieqs, [(0, 2/5)])[0],
+        ....:                        True) as piece:
+        ....:     print(piece.bounding_box(), piece.volume())
+        ....:     print(piece.integrate_rescaled(t1 * t3^2 - t2))
+        ((1/5, 1/5, 1/5), (2/5, 3/5, 3/5)) 3/50
+        17/1500
+        sage: polytope = Polyhedron(eqns = [eqn_sum_one(3)],
+        ....:                       ieqs = [(-1/5, 1, 0, 0), (-1/5, 0, 1, 0),
+        ....:                               (-1/5, 0, 0, 1), (2/5, -1, 0, 0)])
+        sage: summary = PolytopeSummary(polytope)
+        sage: summary.bounding_box(), summary.volume()
+        (((1/5, 1/5, 1/5), (2/5, 3/5, 3/5)), 3/50)
+        sage: summary.integrate_rescaled(t1 * t3^2 - t2)
+        17/1500
+    """
+
+    def __init__(self, cones, border):
+        cones = parse_latte_cones(cones)
+        points = list(dict.fromkeys(vertex for vertex, _, _ in cones))
+        if border:
+            points = [point + (1 - sum(point),) for point in points]
+        self._border = border
+        self._vertices = [list(point) for point in points]
+        self._mini = tuple(min(column) for column in zip(*points))
+        self._maxi = tuple(max(column) for column in zip(*points))
+        dim = len(cones[0][0])
+        self._cones = format_latte_cones(rescale_latte_cones(
+            cones, self.centers()[:dim], self.rayons()[:dim]
+        ))
+        self._volume = None
+        self._session = None
+
+    def _repr_(self):
+        return (
+            f"Polytope summary data with {len(self._vertices)} vertices, "
+            + ("cut out by the equation (-1, 1, ..., 1), " if self._border
+               else "full-dimensional, ")
+            + "given by LattE's cones"
+        )
+
+    def __enter__(self):
+        if self._session is None:
+            self._session = LatteIntegrateSession(self._cones)
+        return self
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        state["_session"] = None
+        return state
+
+    def _latte(self):
+        # The session of the with block, or one for this question only.
+        if self._session is None:
+            return LatteIntegrateSession(self._cones)
+        return nullcontext(self._session)
+
+    def volume(self):
+        r"""
+        Return the volume of the piece, with respect to `dx_1 \dotsm dx_d`,
+        or to `dx_1 \dotsm dx_{d-1}` if it lies on `\sum_i x_i = 1`.
+        """
+        if self._volume is None:
+            with self._latte() as session:
+                self._volume = session.volume() * self.jacobian()
+        return self._volume
+
+    def integrate_rescaled(self, polynomial):
+        r"""
+        Integrate a polynomial in `t_j = (x_j - c_j) / \rho_j`, as
+        :meth:`PolytopeSummary.integrate_rescaled` does.
+        """
+        if self._border:
+            # x_d = 1 - sum_{j<d} x_j, with x_j = c_j + rho_j t_j
+            centers, rayons = self.centers(), self.rayons()
+            ring = PolynomialRing(QQ, "t", len(centers) - 1)
+            t = ring.gens()
+            last = (1 - sum(centers)
+                    - sum(rayons[j] * t[j] for j in range(len(t))))
+            polynomial = substitute_last_coordinate(polynomial, ring,
+                                                    last / rayons[-1])
+        with self._latte() as session:
+            return session.integrate(polynomial) * self.jacobian()
+
+    def close(self):
+        r"""
+        Close the LattE session, if one is open.
+        """
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
 
 
 
@@ -1097,14 +1733,8 @@ def balanced_polytope_integrate(polytope_summary,
     printifdbg = print if verbose > 0 else (lambda *x:None)
     precision = scalar_field.precision()
 
-    ieqs, border, mini, maxi, vol = polytope_summary.unpack()
-    if len(ieqs) == 0:
-        return scalar_field.zero()
-    polytope = Polyhedron(
-        ieqs = ieqs,
-        eqns = [eqn_sum_one(len(ieqs[0])-1)] if border else [],
-        base_ring = QQ
-    )
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
 
     majorant_product = 1/prod(mini)
     trivial_bound = vol * majorant_product
@@ -1117,25 +1747,14 @@ def balanced_polytope_integrate(polytope_summary,
                    f"tail ≤ {RR(estimation_queue)} (trivial)")
         return scalar_field(valeur).add_error(estimation_queue)
 
-    dim = polytope.ambient_dimension()
-    if dim <= 1:
+    if len(mini) <= 1:
         raise NotImplementedError(
             "The polytope should be of dimension 2 or more. "
             "If you are integrating over an interval, use symbolic "
             "computation instead."
         )
-    centers = tuple((mini[j]+maxi[j])/2 for j in range(dim))
-    rayons = tuple((maxi[j]-mini[j])/2 for j in range(dim))
-    ratios = tuple(rayons[j] / centers[j] for j in range(dim))
-    translated_polytope = (
-        polytope
-        .translation(-c for c in centers)
-        .linear_transformation(
-            diagonal_matrix(1/ray for ray in rayons)
-        )
-    )
-    dilation_factor = prod(rayons[:-1]) if border else prod(rayons)
-    # We make it so that the new variables are between -1 and 1
+    centers = polytope_summary.centers()
+    ratios = polytope_summary.ratios()
 
     # The coefficients of degree n of prod_j 1/(1 + r_j x_j) all have the
     # sign (-1)^n, and their absolute values add up to the coefficient of
@@ -1157,11 +1776,8 @@ def balanced_polytope_integrate(polytope_summary,
         truncation_degree = degree
 
     polynome_latte = inverse_expansion(ratios, truncation_degree)
-    valeur = (
-        latte_integrate(translated_polytope,
-                        polynome_latte)
-        * dilation_factor / prod(centers)
-    )
+    valeur = (polytope_summary.integrate_rescaled(polynome_latte)
+              / prod(centers))
     printifdbg(f"  I ≃ {RR(valeur)}, tail ≤ {RR(estimation_queue)}"
                f" (degree {truncation_degree})")
     return scalar_field(valeur).add_error(estimation_queue)
@@ -1351,7 +1967,7 @@ def check_positive_orthant(polytope):
             )
 
 
-def balance_polytope(polytope, facteur, verbose = 0):
+def balance_polytope(polytope, facteur, verbose = 0, engine = None):
     r"""
     Partition a polytope into pieces where the coordinates vary within a
     certain factor of each other.
@@ -1363,6 +1979,12 @@ def balance_polytope(polytope, facteur, verbose = 0):
     - ``facteur`` -- a number greater than 1.
 
     - ``verbose`` -- a boolean.
+
+    - ``engine`` (default: ``None``) -- ``"split"`` cuts the polytope with
+    LattE's ``hyperplane-split`` (see :func:`balance_polytope_split`),
+    ``"sage"`` slices it in Sage (see :func:`balance_polytope_sage`);
+    ``None`` takes ``"split"`` if :func:`latte_toolchain` finds the
+    programs, ``"sage"`` otherwise.
 
     OUTPUT: a list of elements of class PolytopeSummary, each of which
     describes a polytope `Q` which is balanced in the sense that for every
@@ -1413,6 +2035,19 @@ def balance_polytope(polytope, facteur, verbose = 0):
         sage: add(Q.volume() for Q in pieces) == polytope.volume()
         True
 
+    Both engines cut along the same grid, into the same pieces::
+
+        sage: # optional - latte_int latte_split
+        sage: cube = polytopes.hypercube(3) + vector((4, 4, 4))
+        sage: simplex = vector((1/10,) * 4) + 6/10 * polytopes.simplex(3)
+        sage: for P, facteur in ((cube, 1.3), (simplex, 2)):
+        ....:     pieces = {engine: sorted((Q.bounding_box(), Q.volume())
+        ....:                              for Q in balance_polytope(
+        ....:                                  P, facteur, engine = engine))
+        ....:               for engine in ("split", "sage")}
+        ....:     print(len(pieces["split"]), pieces["split"] == pieces["sage"])
+        8 True
+        39 True
     """
     printifdbg = print if verbose > 0 else (lambda *x:None)
     dim = polytope.ambient_dimension()
@@ -1422,6 +2057,11 @@ def balance_polytope(polytope, facteur, verbose = 0):
     facteur = RR(facteur)
     if facteur <= 1:
         raise ValueError("The balancing parameter must be greater than 1.")
+    if engine is None:
+        engine = "sage" if latte_toolchain() is None else "split"
+    if engine not in ("split", "sage"):
+        raise ValueError('The engine should be "split", "sage" or None, '
+                         f"not {engine!r}.")
 
     def facteur_pow(i):
         # Rounded to three decimals, to keep the grid coordinates
@@ -1431,10 +2071,6 @@ def balance_polytope(polytope, facteur, verbose = 0):
     def number_of_cuts(low, high):
         """
         The smallest ``n >= 1`` with ``low * facteur_pow(n) >= high``.
-
-        The cells along one coordinate are the intervals
-        ``[low * facteur_pow(i), low * facteur_pow(i+1)]``, so they cover
-        ``[low, high]`` exactly when the last line reaches ``high``.
         """
         cuts = 1
         while low * facteur_pow(cuts) < high:
@@ -1448,6 +2084,61 @@ def balance_polytope(polytope, facteur, verbose = 0):
 
     printifdbg(f"Number of slices = {nombre_decoupes}")
 
+    # The lines along each coordinate, from its lower bound to at least
+    # its upper bound.
+    grid = tuple(tuple(mini[j] * facteur_pow(exponent)
+                       for exponent in range(nombre_decoupes[j] + 1))
+                 for j in range(dim))
+
+    printifdbg(f"Slicing with the {engine} engine...")
+    if engine == "split":
+        split_polytopes = balance_polytope_split(polytope, grid, border)
+    else:
+        split_polytopes = balance_polytope_sage(polytope, grid, border,
+                                                verbose = verbose)
+
+    printifdbg(f"Slicing done, there are {len(split_polytopes)} polytopes.")
+
+    return split_polytopes
+
+
+def balance_polytope_sage(polytope, grid, border, verbose = 0):
+    r"""
+    Slice a polytope along a grid in Sage, for :func:`balance_polytope`.
+
+    Each cell is tested for emptiness, then built as a Polyhedron, whose
+    volume LattE computes.
+
+    INPUT:
+
+    - ``polytope`` (Polyhedron object) -- a polytope.
+
+    - ``grid`` -- for each coordinate, the increasing tuple of lines
+    along it, the cells lying between consecutive lines.
+
+    - ``border`` -- whether ``polytope`` is cut out by `\sum_i x_i = 1`.
+
+    - ``verbose`` -- if positive, show a progress bar over the cells.
+
+    OUTPUT: a list of :class:`PolytopeSummary` objects.
+
+    EXAMPLES:
+
+    The segment `x_1 + x_2 = 1`, `x_1, x_2 \geq 1/5`, meets three cells::
+
+        sage: # optional - latte_int
+        sage: segment = Polyhedron(eqns = [(-1, 1, 1)],
+        ....:                      ieqs = [(-1/5, 1, 0), (-1/5, 0, 1)])
+        sage: grid = ((1/5, 2/5, 4/5), (1/5, 2/5, 4/5))
+        sage: pieces = balance_polytope_sage(segment, grid, True)
+        sage: sorted(Q.bounding_box() for Q in pieces)
+        [((1/5, 3/5), (2/5, 4/5)),
+         ((2/5, 2/5), (3/5, 3/5)),
+         ((3/5, 1/5), (4/5, 2/5))]
+    """
+    printifdbg = print if verbose > 0 else (lambda *x:None)
+    dim = polytope.ambient_dimension()
+
     # Compute the inequalities lists which describe the cuts, in each
     # dimension.
     planches = []
@@ -1455,9 +2146,9 @@ def balance_polytope(polytope, facteur, verbose = 0):
         ieq_coeff_plus = (0,) * j + (1,) + (0,) * (dim-1-j)
         ieq_coeff_minus = (0,) * j + (-1,) + (0,) * (dim-1-j)
         planches.append(tuple(
-            [(-mini[j]*facteur_pow(exponent),) + ieq_coeff_plus,
-             (mini[j]*facteur_pow(exponent+1),) + ieq_coeff_minus]
-            for exponent in range(nombre_decoupes[j])
+            [(-grid[j][exponent],) + ieq_coeff_plus,
+             (grid[j][exponent+1],) + ieq_coeff_minus]
+            for exponent in range(len(grid[j]) - 1)
         ))
 
     ieqs_pile = [polytope.inequalities_list()]
@@ -1482,8 +2173,73 @@ def balance_polytope(polytope, facteur, verbose = 0):
                 PolytopeSummary(current_polytope)
             )
 
-    printifdbg(f"Slicing done, there are {len(split_polytopes)} polytopes.")
+    return split_polytopes
 
+
+def balance_polytope_split(polytope, grid, border):
+    r"""
+    Cut a polytope along a grid with LattE's ``hyperplane-split``, for
+    :func:`balance_polytope`.
+
+    ``hyperplane-split`` derives the cones of every piece from those of
+    the polytope, and each piece's volume is computed later, by the LattE
+    session that integrates over it. A polytope with no line of the grid
+    inside is a single piece, summarised by Sage: ``hyperplane-split``
+    needs a cut.
+
+    On `\sum_i x_i = 1`, the cut `x_d = a` is not parallel to an axis
+    once `x_d` is eliminated. The polytope is therefore sliced along
+    `x_d` in Sage first, and each slice, `x_d` eliminated, is cut along
+    the other axes.
+
+    INPUT: as for :func:`balance_polytope_sage`.
+
+    OUTPUT: a list of :class:`SplitPieceSummary` objects, and of
+    :class:`PolytopeSummary` objects for the uncut polytopes.
+
+    EXAMPLES:
+
+    The segment of :func:`balance_polytope_sage`: the slice
+    `1/5 \leq x_2 \leq 2/5` has no line inside, the slice
+    `2/5 \leq x_2 \leq 4/5` is cut at `x_1 = 2/5`::
+
+        sage: # optional - latte_int latte_split
+        sage: segment = Polyhedron(eqns = [(-1, 1, 1)],
+        ....:                      ieqs = [(-1/5, 1, 0), (-1/5, 0, 1)])
+        sage: grid = ((1/5, 2/5, 4/5), (1/5, 2/5, 4/5))
+        sage: pieces = balance_polytope_split(segment, grid, True)
+        sage: [(type(Q).__name__, Q.bounding_box()) for Q in pieces]
+        [('PolytopeSummary', ((3/5, 1/5), (4/5, 2/5))),
+         ('SplitPieceSummary', ((1/5, 3/5), (2/5, 4/5))),
+         ('SplitPieceSummary', ((2/5, 2/5), (3/5, 3/5)))]
+    """
+    dim = polytope.ambient_dimension()
+
+    def pieces(whole, ieqs, axes):
+        mini, maxi = whole.bounding_box()
+        cuts = [(j, line) for j in range(axes) for line in grid[j]
+                if mini[j] < line < maxi[j]]
+        if not cuts:
+            return [PolytopeSummary(whole)]
+        return [SplitPieceSummary(cones, border)
+                for cones in latte_split(ieqs, cuts)]
+
+    if not border:
+        return pieces(polytope, polytope.inequalities_list(), dim)
+    split_polytopes = []
+    for low, high in zip(grid[-1], grid[-1][1:]):
+        slab = polytope_if_dim(polytope.inequalities_list()
+                               + [(-low,) + (0,) * (dim - 1) + (1,),
+                                  (high,) + (0,) * (dim - 1) + (-1,)],
+                               dim, True)
+        if slab is None:
+            continue
+        equation = slab.equations_list()[0]
+        ieqs = [make_ieq_fulldim_from_eqn(ieq, equation)
+                for ieq in slab.inequalities_list()]
+        # An inequality parallel to the equation becomes 0 >= 0.
+        ieqs = [ieq for ieq in ieqs if any(ieq[1:])]
+        split_polytopes += pieces(slab, ieqs, dim - 1)
     return split_polytopes
 
 
@@ -1529,18 +2285,22 @@ def process_polytope(polytope_summary,
     polytope. This function is for use in multiprocessing.
 
     """
-    mini, maxi, vol = polytope_summary.unpack()[2:]
-    dim = len(mini)
-    # Compute the largest ratio between values, in each dimension,
-    # and use this value to estimate how far we need to truncate
-    facteur = max(maxi[j]/mini[j] for j in range(dim))
-    truncation_degree, prod_rel_error = errorbound_inverse_tail(
-        vol/prod(mini), (facteur-1)/(facteur+1), dim, scalar_field
-    )
-    val = balanced_polytope_integrate(polytope_summary,
-                                      truncation_degree,
-                                      scalar_field,
-                                      verbose = verbose)
+    # The volume and the integral come from the same LattE session, if
+    # the piece has one, closed once the piece is done.
+    with polytope_summary:
+        mini, maxi = polytope_summary.bounding_box()
+        vol = polytope_summary.volume()
+        dim = len(mini)
+        # Compute the largest ratio between values, in each dimension,
+        # and use this value to estimate how far we need to truncate
+        facteur = max(maxi[j]/mini[j] for j in range(dim))
+        truncation_degree, prod_rel_error = errorbound_inverse_tail(
+            vol/prod(mini), (facteur-1)/(facteur+1), dim, scalar_field
+        )
+        val = balanced_polytope_integrate(polytope_summary,
+                                          truncation_degree,
+                                          scalar_field,
+                                          verbose = verbose)
     majorant_product = 1 / prod(mini)
     abs_error = vol * majorant_product * prod_rel_error
     return scalar_field(val).add_error(abs_error)
@@ -1548,7 +2308,7 @@ def process_polytope(polytope_summary,
 
 
 def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
-                   processes = None, verbose = 0):
+                   processes = None, verbose = 0, engine = None):
     r"""
     Compute the integral over the given polytope of
     ``dt_1 ... dt_d / t_1 ... t_d``.
@@ -1576,6 +2336,10 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
 
     - ``verbose`` (default: False) -- if positive, will print updates on the
     computation.
+
+    - ``engine`` (default: ``None``) -- what cuts the polytope into
+    balanced pieces, LattE's ``hyperplane-split`` (``"split"``) or Sage
+    (``"sage"``); see :func:`balance_polytope`.
 
 
     OUTPUT: a ``RealBall`` containing the value of the requested integral.
@@ -1614,6 +2378,14 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
         sage: x = var("x")
         sage: RR(1/2 * integrate(log(6 - x)/x, (x, 1, 5)))
         0.956913527101737
+
+    Both engines cut it into the same pieces, and give the same value::
+
+        sage: # optional - latte_int latte_split
+        sage: sieve_integral(polytope, engine = "split")
+        [0.9569 +/- 3.06e-5]
+        sage: sieve_integral(polytope, engine = "sage")
+        [0.9569 +/- 3.06e-5]
 
     The polytope may also be given as symbolic inequalities::
 
@@ -1680,7 +2452,8 @@ def sieve_integral(polytope_data, precision = 20, facteur = 1.3,
 
     balanced_polytopes = balance_polytope(polytope,
                                           facteur,
-                                          verbose = verbose - 1)
+                                          verbose = verbose - 1,
+                                          engine = engine)
     process_polytope_partial = partial(process_polytope,
                                        scalar_field = scalar_field,
                                        verbose = verbose - 1)
@@ -1743,7 +2516,8 @@ def sieve_integral_harman(polytope_data,
                           precision = 20,
                           facteur = 1.3,
                           processes = None,
-                          verbose = 0):
+                          verbose = 0,
+                          engine = None):
     r"""
     Compute the integral over a polytope of the function given by
     `B(x_i/x_j) F(x) / x_1 \dotsb x_d`, where `B(u) = u \omega(u)`
@@ -1775,6 +2549,8 @@ def sieve_integral_harman(polytope_data,
 
     - ``verbose`` (default: 0) -- if positive, gives information on the
     computation.
+
+    - ``engine`` (default: ``None``) -- as in :func:`sieve_integral`.
 
     OUTPUT: a RealBall containing the value of the integral.
 
@@ -1937,7 +2713,8 @@ def sieve_integral_harman(polytope_data,
             facteur = facteur,
             processes = processes,
             verbose = verbose,
-            precision = precision
+            precision = precision,
+            engine = engine
         )
 
     # We load an approximation of the Buchstab B(u) = u ω(u) function
@@ -1991,7 +2768,8 @@ def sieve_integral_harman(polytope_data,
                 facteur = facteur,
                 processes = processes,
                 verbose = verbose,
-                precision = precision
+                precision = precision,
+                engine = engine
             )
 
 
@@ -2006,7 +2784,8 @@ def sieve_integral_polyratio(polytope,
                              facteur = 1.3,
                              processes = None,
                              verbose = 0,
-                             precision = 20):
+                             precision = 20,
+                             engine = None):
     """
     Computes the sieve integral over the Polyhedron P, of
     polynomial1(2*(t_r / t_s - midpt)) * polynomial2(t) / prod(t_j).
@@ -2044,7 +2823,8 @@ def sieve_integral_polyratio(polytope,
 
     split_polytopes = balance_polytope(polytope,
                                        facteur = facteur,
-                                       verbose = verbose - 1)
+                                       verbose = verbose - 1,
+                                       engine = engine)
     process_polytope_partial = partial(process_polytope_polyratio,
                                        scalar_field = scalar_field,
                                        polynomial1 = polynomial1,
@@ -2078,25 +2858,28 @@ def process_polytope_polyratio(polytope_summary,
     to integrate this into the sage libraries.
     """
 
-    mini, maxi, vol = polytope_summary.unpack()[2:]
-    dim = len(mini)
-    facteur = max(maxi[j]/mini[j] for j in range(dim))
-    truncation_degree, prod_rel_error = (
-        errorbound_inverse_tail(vol/prod(mini),
-                                (facteur-1)/(facteur+1),
-                                dim,
-                                scalar_field)
-    )
-    value = balanced_polytope_integrate_polyratio(
-        polytope_summary,
-        polynomial1,
-        midpt,
-        ratio_idx,
-        polynomial2,
-        truncation_degree,
-        scalar_field,
-        verbose = verbose - 1
-    )
+    # As in process_polytope, one LattE session serves the whole piece.
+    with polytope_summary:
+        mini, maxi = polytope_summary.bounding_box()
+        vol = polytope_summary.volume()
+        dim = len(mini)
+        facteur = max(maxi[j]/mini[j] for j in range(dim))
+        truncation_degree, prod_rel_error = (
+            errorbound_inverse_tail(vol/prod(mini),
+                                    (facteur-1)/(facteur+1),
+                                    dim,
+                                    scalar_field)
+        )
+        value = balanced_polytope_integrate_polyratio(
+            polytope_summary,
+            polynomial1,
+            midpt,
+            ratio_idx,
+            polynomial2,
+            truncation_degree,
+            scalar_field,
+            verbose = verbose - 1
+        )
     majorant_product = 1/prod(mini)
     majorant_polynomial1 = (
         1 if polynomial1 is None
@@ -2146,7 +2929,8 @@ def balanced_polytope_integrate_polyratio(
         poly1_epsilon = scalar_field.zero().upper()
         poly1 = None
 
-    ieqs, border, mini, maxi, vol = polytope_summary.unpack()
+    mini, maxi = polytope_summary.bounding_box()
+    vol = polytope_summary.volume()
 
     majorant_polynomial1 = (
         1 if poly1 is None
@@ -2167,32 +2951,16 @@ def balanced_polytope_integrate_polyratio(
         # negative.
         return scalar_field.zero().add_error(trivial_bound)
 
-    if len(ieqs) == 0:
-        return scalar_field.zero()
-    dim = len(ieqs[0]) - 1
+    dim = len(mini)
     if dim <= 1:
         raise NotImplementedError(
             "The polytope should be of dimension 2 or more. "
             "If you are integrating over an interval, use symbolic "
             "computation instead."
         )
-    polytope = Polyhedron(ieqs = ieqs,
-                          eqns = [eqn_sum_one(dim)] if border else [],
-                          base_ring = QQ)
-
-    centers = tuple((mini[j] + maxi[j]) / 2 for j in range(dim))
-    rayons = tuple((maxi[j] - mini[j]) / 2 for j in range(dim))
-    ratios = tuple(rayons[j] / centers[j] for j in range(dim))
-    translated_polytope = (
-        polytope
-        .translation(-c for c in centers)
-        .linear_transformation(
-            diagonal_matrix(1 / ray for ray in rayons)
-        )
-    )
-    dilation_factor = prod(rayons[:-1]) if border else prod(rayons)
-    # In case border = True, we will project onto the first dim-1
-    # coordinates before integrating.
+    centers = polytope_summary.centers()
+    rayons = polytope_summary.rayons()
+    ratios = polytope_summary.ratios()
 
     fonction = inverse_expansion(ratios, truncation_degree - 1)
     ring = fonction.parent()
@@ -2222,7 +2990,7 @@ def balanced_polytope_integrate_polyratio(
         # |a_k| ((1 + eps_k)^k - 1); M_k is the least degree keeping that,
         # times poly1_scale, within an equal share of 2^-precision.
         Z = max(abs(v[numer_idx] - midpt * v[denom_idx])
-                for v in polytope.vertices_list())
+                for v in polytope_summary.vertices())
         poly1_coeffs = poly1.monomial_coefficients()
         term_budget = 2**(-precision) / (poly1_scale * len(poly1_coeffs))
         degrees = {}
@@ -2314,10 +3082,8 @@ def balanced_polytope_integrate_polyratio(
         # Everything was dropped, and charged.
         valeur = 0
     else:
-        valeur = (
-            latte_integrate(translated_polytope, polynomial_latte)
-            * dilation_factor / prod(centers)
-        )
+        valeur = (polytope_summary.integrate_rescaled(polynomial_latte)
+                  / prod(centers))
     printifdbg(f"  I ≃ {RR(valeur)}, tail ≤ {RR(estimation_queue)} "
                f"(degree {dmax})")
 

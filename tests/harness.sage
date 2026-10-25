@@ -34,6 +34,7 @@ import os
 import shutil
 import subprocess
 from contextlib import contextmanager
+from unittest import SkipTest
 
 from sage.repl.load import load as sage_load
 
@@ -152,21 +153,28 @@ def clear_values():
     _values.clear()
 
 
-def example_value(name, extra_bits=0):
+def example_value(name, extra_bits=0, engine=None):
     """
-    The value of the named example, computed at most once per precision.
+    The value of the named example, computed at most once per precision and
+    engine.
 
     ``extra_bits`` is added to the example's own default precision -- to both
     components of their ``(p0, p1)`` pair for the h anchors, which is why it is
     a number of extra bits rather than a precision: the examples do not all run
     at the same one. The h examples return the five components of
     ``h_bar``; the value kept here is the fourth, the one the notebook reports.
+
+    ``engine`` is the one ``balance_polytope`` uses (see
+    ``balancing_engine``); ``None`` leaves the library's default. The h
+    examples do their own balancing, and take no engine.
     """
-    key = (name, extra_bits)
+    key = (name, extra_bits, engine)
     if key in _values:
         return _values[key]
     default = default_precision(name)
     if is_h_example(name):
+        if engine is not None:
+            raise ValueError(f"{name} does not use balance_polytope")
         test = h_namespace()["H_EXAMPLES"][name]
         precision = tuple(p + extra_bits for p in default)
         # two of the three anchors print their progress by default
@@ -174,10 +182,33 @@ def example_value(name, extra_bits=0):
             value = test(precision=precision, verbose=False)[3]
     else:
         test = examples_namespace()["ALL_EXAMPLES"][name]
-        with in_directory(EXAMPLES_DIR):
+        with in_directory(EXAMPLES_DIR), balancing_engine(engine):
             value = test(precision=default + extra_bits)
     _values[key] = value
     return value
+
+
+@contextmanager
+def balancing_engine(engine):
+    """
+    Run the body with ``balance_polytope`` using ``engine``, whatever its
+    callers pass: the example scripts take no engine. ``None`` changes
+    nothing.
+    """
+    if engine is None:
+        yield
+        return
+    namespace = library_namespace()
+    original, chosen = namespace["balance_polytope"], engine
+
+    def forced(polytope, facteur, verbose=0, engine=None):
+        return original(polytope, facteur, verbose, engine=chosen)
+
+    namespace["balance_polytope"] = forced
+    try:
+        yield
+    finally:
+        namespace["balance_polytope"] = original
 
 
 def default_precision(name):
