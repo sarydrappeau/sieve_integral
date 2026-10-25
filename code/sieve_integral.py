@@ -573,9 +573,9 @@ def substitute_last_coordinate(polynomial, new_ring, last_image):
     ``last_image``, as an element of ``new_ring``, whose variables stand
     for the other ones, in the same order.
 
-    The polynomial is evaluated as a univariate in its last variable, by
-    Horner's rule; ``last_image`` is affine where this is used, but need
-    not be.
+    The terms are grouped by their exponent of the last variable, each
+    group an element of ``new_ring``, and the groups combined by Horner's
+    rule; ``last_image`` is affine where this is used, but need not be.
 
     INPUT:
 
@@ -589,8 +589,8 @@ def substitute_last_coordinate(polynomial, new_ring, last_image):
 
     EXAMPLES:
 
-    One example where the coefficientss of `x` and `y` differ, to
-    check that variables are not unduely permuted::
+    One example where the coefficients of `x` and `y` differ, to
+    check that variables are not unduly permuted::
 
         sage: R.<x, y, z> = QQ[]
         sage: S.<u, v> = QQ[]
@@ -616,6 +616,15 @@ def substitute_last_coordinate(polynomial, new_ring, last_image):
         ValueError: the polynomial has 3 variables and the new ring 1;
         it should have exactly one fewer
 
+    A ``negdeglex`` input, as in the Buchstab chain, against ``subs``::
+
+        sage: N.<a, b, c> = PolynomialRing(QQ, order="negdeglex")
+        sage: M = PolynomialRing(QQ, "a, b", order="negdeglex")
+        sage: q = (1 + a*c + b^2*c^3 - 2*c)^3
+        sage: new = substitute_last_coordinate(q, M, 1/3 - M.0 + 2*M.1)
+        sage: new == M(q.subs({c: 1/3 - a + 2*b}))
+        True
+
     """
 
     ring = polynomial.parent()
@@ -623,12 +632,15 @@ def substitute_last_coordinate(polynomial, new_ring, last_image):
         raise ValueError(f"the polynomial has {ring.ngens()} variables and "
                          f"the new ring {new_ring.ngens()}; it should have "
                          "exactly one fewer")
-    univariate = polynomial.polynomial(ring.gens()[-1])
-    if new_ring.ngens() == 0:
-        # the coefficients are rational numbers already
-        return new_ring(univariate(last_image))
-    into_new_ring = univariate.base_ring().hom(new_ring.gens(), new_ring)
-    return univariate.change_ring(into_new_ring)(last_image)
+    # The keys of dict() are ETuples, which take no negative index.
+    last = new_ring.ngens()
+    groups = {}
+    for exponents, coeff in polynomial.dict().items():
+        groups.setdefault(exponents[last], {})[exponents[:last]] = coeff
+    result = new_ring.zero()
+    for k in range(max(groups, default = 0), -1, -1):
+        result = result * last_image + new_ring(groups.get(k, {}))
+    return result
 
 
 def latte_integrate(polytope, polynomial = None):
@@ -3035,7 +3047,7 @@ def balanced_polytope_integrate_polyratio(
                     exponents[denom_idx], exponents[dim] = n, k
                     terms[tuple(exponents)] = coeff
         poly1_compose = big_ring(terms)
-        t = big_ring.gens()
+        t = ring.gens()
         z_image = ((centers[numer_idx] - midpt * centers[denom_idx])
                    + rayons[numer_idx] * t[numer_idx]
                    - midpt * rayons[denom_idx] * t[denom_idx]) / Z
@@ -3074,10 +3086,11 @@ def balanced_polytope_integrate_polyratio(
                 if degree <= dmax),
                big_ring.zero())
     if z_image is not None:
-        # z is replaced within big_ring, then its exponent, now 0, dropped.
-        kept = kept.subs({big_ring.gen(dim): z_image})
-    polynomial_latte = ring({tuple(e)[:-1]: coeff
-                             for e, coeff in kept.dict().items()})
+        polynomial_latte = substitute_last_coordinate(kept, ring, z_image)
+    else:
+        # kept has no z: only its exponent, 0, is dropped.
+        polynomial_latte = ring({tuple(e)[:-1]: coeff
+                                 for e, coeff in kept.dict().items()})
     if polynomial_latte.is_zero():
         # Everything was dropped, and charged.
         valeur = 0
