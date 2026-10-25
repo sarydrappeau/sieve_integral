@@ -96,9 +96,10 @@ def _build_stadlmann_polytopes():
                   [[0.08], [a3, (1-a1-a2-a3)/2]]], var=4)
     bounds_from_arxiv.append(0.003)
 
+    # Bound provided by J. Stadlmann.
     add_polytope([[[0.655/3], [0.285]],
                   [[(0.655-a1)/2], [a1, 0.526-a1]]], var=2)
-    bounds_from_arxiv.append(0.01)
+    bounds_from_arxiv.append(0.133688)
 
     add_polytope([[[0.08], [0.285]],
                   [[0.08], [a1, (0.655-a1)/2]],
@@ -366,7 +367,7 @@ def _build_stadlmann_polytopes():
                   [[0.065], [a2]],
                   [[0.065, (0.645-a1-a2-a3)/2],
                    [a3, (1-a1-a2-a3)/2]]], var=4)
-    bounds_from_arxiv.append(0.0180)
+    bounds_from_arxiv.append(0.044)
 
     # Three of the polytopes need further corrections (mismatching
     # between the p_i-sum conditions and the integral condition).
@@ -386,7 +387,8 @@ def _build_stadlmann_polytopes():
                          a1 + a4 > 0.42,
                          a1 + a2 + a3 + a4 + a5 == 1}
 
-    # This one is the one whose integral is bounded by 0.0180
+    # This one is the one whose integral is bounded by 0.044, a bound
+    # provided by J. Stadlmann.
     polytope_list[58] = {a4 > 0.065,
                          a3 > a4,
                          a2 > a3,

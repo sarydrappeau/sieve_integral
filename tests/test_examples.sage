@@ -204,13 +204,4 @@ TESTS.update({
 })
 
 
-KNOWN_ISSUES = {
-    "bound/stadlmann/02":
-        "GLPK wrongly rejects feasible cells, so the value is too small "
-        "(step 9); and the corrected value, about 0.1221, still exceeds the "
-        "bound 0.01 recorded from the paper -- open question for Sary",
-    "bound/stadlmann/58":
-        "the value, about 0.0421, exceeds the bound 0.018 recorded from the "
-        "paper; polytope 58 is one of the three the notebook replaces by a "
-        "correction -- open question for Sary",
-}
+KNOWN_ISSUES = {}
