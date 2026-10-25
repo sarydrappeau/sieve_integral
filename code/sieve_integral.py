@@ -559,6 +559,69 @@ def make_ieq_fulldim_from_eqn(ieq, eqn):
                  for i in range(dim))
 
 
+def substitute_last_coordinate(polynomial, new_ring, last_image):
+    r"""Return ``polynomial`` with its last variable replaced by
+    ``last_image``, as an element of ``new_ring``, whose variables stand
+    for the other ones, in the same order.
+
+    The polynomial is evaluated as a univariate in its last variable, by
+    Horner's rule; ``last_image`` is affine where this is used, but need
+    not be.
+
+    INPUT:
+
+    - ``polynomial`` -- a polynomial over ``QQ`` in `d \geq 1` variables.
+
+    - ``new_ring`` -- a polynomial ring over ``QQ`` in `d - 1` variables.
+
+    - ``last_image`` -- an element of ``new_ring``.
+
+    OUTPUT: an element of ``new_ring``.
+
+    EXAMPLES:
+
+    One example where the coefficientss of `x` and `y` differ, to
+    check that variables are not unduely permuted::
+
+        sage: R.<x, y, z> = QQ[]
+        sage: S.<u, v> = QQ[]
+        sage: p = x*z^2 + 2*y*z + 3*x + 5*y
+        sage: substitute_last_coordinate(p, S, 1 - u - v)
+        u^3 + 2*u^2*v + u*v^2 - 2*u^2 - 4*u*v - 2*v^2 + 4*u + 7*v
+        sage: _ == S(p.subs({x: u, y: v, z: 1 - u - v}))
+        True
+
+    TESTS::
+
+        sage: substitute_last_coordinate(R.zero(), S, u).parent() is S
+        True
+        sage: substitute_last_coordinate(7*x + 11*y^2, S, 1 - u - v)
+        11*v^2 + 7*u
+        sage: R1 = PolynomialRing(QQ, "x", 1)
+        sage: S0 = PolynomialRing(QQ, "t", 0)
+        sage: substitute_last_coordinate(R1.gen()^2 + 3, S0, S0(2))
+        7
+        sage: substitute_last_coordinate(p, R1, R1.gen())
+        Traceback (most recent call last):
+        ...
+        ValueError: the polynomial has 3 variables and the new ring 1;
+        it should have exactly one fewer
+
+    """
+
+    ring = polynomial.parent()
+    if ring.ngens() != new_ring.ngens() + 1:
+        raise ValueError(f"the polynomial has {ring.ngens()} variables and "
+                         f"the new ring {new_ring.ngens()}; it should have "
+                         "exactly one fewer")
+    univariate = polynomial.polynomial(ring.gens()[-1])
+    if new_ring.ngens() == 0:
+        # the coefficients are rational numbers already
+        return new_ring(univariate(last_image))
+    into_new_ring = univariate.base_ring().hom(new_ring.gens(), new_ring)
+    return univariate.change_ring(into_new_ring)(last_image)
+
+
 def latte_integrate(polytope, polynomial = None):
     """
     Call the LattE software to integrate polynomial on polytope.
@@ -667,22 +730,16 @@ def latte_integrate(polytope, polynomial = None):
 
     dim = polytope.ambient_dimension()
     if polynomial is None:
-        old_ring = PolynomialRing(QQ, "x", dim)
-        poly = old_ring.one()
+        poly = PolynomialRing(QQ, "x", dim).one()
     else:
         poly = polynomial.change_ring(QQ)
-        old_ring = poly.parent()
-    old_gens = old_ring.gens()
     new_ring = PolynomialRing(QQ, "t", dim - 1)
     new_gens = new_ring.gens()
-    dic = {}
-    for i in range(dim - 1):
-        dic[old_gens[i]] = new_gens[i]
-    dic[old_gens[dim-1]] = (
+    polynomial_new = substitute_last_coordinate(
+        poly, new_ring,
         -(eqn[0] + sum(new_gens[i] * eqn[1+i]
                        for i in range(dim - 1))) / eqn[dim]
     )
-    polynomial_new = new_ring(poly.subs(dic))
 
     polytope_new = Polyhedron(
         ieqs = [make_ieq_fulldim_from_eqn(ieq, eqn)

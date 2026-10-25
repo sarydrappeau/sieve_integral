@@ -7,7 +7,7 @@ row per finding, with the evidence that established it. The two modules of
 Everything below was checked against SageMath 10.7 and LattE 1.7.6, except where
 it names Sage 11.0.beta0, and
 `cd code && sage -t --long number_theoretic_dde_solutions.py sieve_integral.py`
-passes, with 57 and 184 tests.
+passes, with 57 and 195 tests.
 
 ## `code/number_theoretic_dde_solutions.py`
 
@@ -132,7 +132,10 @@ do not move. It is costly at higher precision, where the honest degree is
 higher: on the `maynard/I9` piece above, 23 against the 16 kept before, and 794s
 of CPU against 60s. The long suite takes 13474s against 2414s (Sage 11.0.beta0,
 not a timing run), nearly all of it in the self-consistency tests, 20 bits above
-each example's precision.
+each example's precision. Eliminating the last coordinate by Horner's rule
+rather than by `subs` (`substitute_last_coordinate`, called by
+`latte_integrate`) brings it down to 5452s, LattE receiving the same
+polynomials.
 
 ### Left for later
 
@@ -156,12 +159,6 @@ each example's precision.
   chain, keep the last homogeneous component they charge, which is then both
   integrated and charged: sound, but in 87 of the 123 calls the plain chain
   makes on the examples, that component is most of the error charged.
-* On pieces lying on `Σ x_i = 1`, `latte_integrate` eliminates the last
-  coordinate with Sage's generic substitution into another ring, which row 17's
-  larger polynomials make slow: on the `maynard/I9` piece above, with an
-  earlier form of row 17, about 900s of a 1010s call. Substituting within the
-  same ring and dropping the exponent was 23 times faster on row 17's own
-  substitution of `z`.
 
 ## Traps worth remembering
 
