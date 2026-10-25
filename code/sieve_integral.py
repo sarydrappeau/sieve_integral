@@ -99,6 +99,7 @@ from sage.matrix.special import diagonal_matrix
 from sage.rings.power_series_ring import PowerSeriesRing
 from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
 from sage.rings.big_oh import O
+from sage.combinat.integer_vector import IntegerVectors
 from sage.misc.misc_c import prod
 from sage.geometry.polyhedron.constructor import Polyhedron
 from sage.geometry.polyhedron.base import Polyhedron_base
@@ -852,6 +853,44 @@ def eqn_sum_one(dim):
     return (-1,) + (1,) * dim
 
 
+def inverse_expansion(ratios, degree):
+    r"""
+    Return the Taylor expansion of `\prod_j 1/(1 + r_j x_j)` up to total
+    degree ``degree``, in which the coefficient of `x^a` is
+    `\prod_j (-r_j)^{a_j}`.
+
+    INPUT:
+
+    - ``ratios`` -- a tuple of rational numbers `r_j`.
+
+    - ``degree`` -- the largest total degree kept.
+
+    OUTPUT: a polynomial over ``QQ`` in the variables ``x0, x1, ...``, in
+    the ``negdeglex`` order of a multivariate power series ring.
+
+    EXAMPLES::
+
+        sage: inverse_expansion((1/3, 1/5), 2)
+        1 - 1/3*x0 - 1/5*x1 + 1/9*x0^2 + 1/15*x0*x1 + 1/25*x1^2
+
+    It is the polynomial of the power series, in the same ring::
+
+        sage: ratios = (1/3, 1/5, 2/7)
+        sage: x = PowerSeriesRing(QQ, "x", num_gens = 3).gens()
+        sage: series = prod((1 + x[j] * ratios[j] + O(x[j]**7)).inverse()
+        ....:               for j in range(3))
+        sage: inverse_expansion(ratios, 6) == series.polynomial()
+        True
+        sage: inverse_expansion(ratios, 6).parent() is series.polynomial().parent()
+        True
+    """
+
+    ring = PolynomialRing(QQ, "x", len(ratios), order = "negdeglex")
+    return ring({tuple(a): prod((-r)**e for r, e in zip(ratios, a))
+                 for n in range(degree + 1)
+                 for a in IntegerVectors(n, len(ratios))})
+
+
 def balanced_polytope_integrate(polytope_summary,
                                 truncation_degree,
                                 scalar_field,
@@ -1001,37 +1040,26 @@ def balanced_polytope_integrate(polytope_summary,
     dilation_factor = prod(rayons[:-1]) if border else prod(rayons)
     # We make it so that the new variables are between -1 and 1
 
-    series_gens = PowerSeriesRing(QQ, "x", num_gens = dim).gens()
-
-    fonction = (prod((1 + series_gens[j] * ratios[j]
-                      + O(series_gens[j] ** truncation_degree))
-                     .inverse() for j in range(dim))
-                .polynomial())
-    homog = fonction.homogeneous_components()
+    # The coefficients of degree n of prod_j 1/(1 + r_j x_j) all have the
+    # sign (-1)^n, and their absolute values add up to the coefficient of
+    # z^n in prod_j 1/(1 - r_j z).
+    z = PowerSeriesRing(QQ, "z", default_prec = truncation_degree).gen()
+    abs_sums = (prod(1 / (1 - r * z) for r in ratios)
+                .padded_list(truncation_degree))
 
     truncation_degree = truncation_degree-1
     estimation_queue = 0
     for degree in range(truncation_degree, -1, -1):
-        if degree in homog:
-            upper_bound = sum(
-                abs(coeff) for coeff in (
-                    homog[degree].monomial_coefficients().values()
-                )
-            )
-            new_majo = (
-                scalar_field(vol * upper_bound / prod(centers))
-                .upper()
-            )
-            if estimation_queue + new_majo > 2**(-precision):
-                break
-            estimation_queue += new_majo
-            truncation_degree = degree
+        new_majo = (
+            scalar_field(vol * abs_sums[degree] / prod(centers))
+            .upper()
+        )
+        if estimation_queue + new_majo > 2**(-precision):
+            break
+        estimation_queue += new_majo
+        truncation_degree = degree
 
-    polynome_latte = sum(
-        homog_part
-        for d, homog_part in homog.items()
-        if d <= truncation_degree
-    )
+    polynome_latte = inverse_expansion(ratios, truncation_degree)
     valeur = (
         latte_integrate(translated_polytope,
                         polynome_latte)
@@ -2071,11 +2099,7 @@ def balanced_polytope_integrate_polyratio(
 
     series_ring = PowerSeriesRing(QQ, "x", num_gens = dim)
     series_gens = series_ring.gens()
-    fonction = prod(
-        (1 + series_gens[j] * ratios[j]
-         + O(series_gens[j]**truncation_degree)).inverse()
-        for j in range(dim)
-    ).polynomial()
+    fonction = inverse_expansion(ratios, truncation_degree - 1)
 
     if poly1 is not None:
         numer_idx, denom_idx = ratio_idx

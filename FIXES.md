@@ -110,10 +110,17 @@ differential-delay solutions rather than the Buchstab chain, do not move: 7.53s
 against 7.39s, a ratio of 0.98.
 
 Row 16 moves `stadlmann/02` alone, from `[0.11328 +/- 6.92e-6]` to
-`[0.1221 +/- 3.10e-5]`; the h anchors do not move. PPL now runs on the 6319
-rejections, which costs 1.1% on the long suite, 2195s against 2172s in a paired
-run. Nearly all of it is `h/0.45-0.5`, from 6.2s to 19.7s, where
-`polytope_if_dim` rejects 4238 of its 4582 calls, none of them wrongly.
+`[0.1221 +/- 3.10e-5]`; the h anchors do not move. Its cost was measured in CPU
+time on Sage 11.0.beta0, over the 19527 calls made in computing the 80 examples
+and the three h anchors once, keeping the fastest of five passes: with GLPK,
+6325 calls are rejected, 7 of them wrongly, all in `stadlmann/02`, and the PPL
+confirmations take 19.1s, against 562.6s for the whole computation, LattE
+included: 3.4%. Two thirds of that is `h/0.45-0.5`, 12.4s of its 23.4s.
+
+From Sage 11.0 on, the default solver is HiGHS, GLPK being deprecated. On the
+same calls HiGHS rejects 6318, none of them wrongly, so there the confirmation
+changes no answer and costs about as much, 20.2s. It is what keeps the result
+right on Sage 10.7, which `environment.yml` prescribes.
 
 ### Left for later
 
@@ -131,7 +138,7 @@ run. Nearly all of it is `h/0.45-0.5`, from 6.2s to 19.7s, where
   now carries.
 * In `polytope_if_dim` the LP, and since row 16 its PPL confirmation, come just
   before an exact `Polyhedron` whose dimension is read anyway, so there they are
-  redundant. Its PPL calls take 20.9s of the 26.1s that row 16 adds; whether
+  redundant. Its PPL calls take 16.0s of the 19.1s that row 16 adds; whether
   building the `Polyhedron` straight away is cheaper has not been measured.
 
 ## Traps worth remembering
